@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
 import {
   loadAIConfig,
@@ -19,7 +20,22 @@ type FeedState =
   | { status: "error"; error: string }
   | { status: "ready"; articles: Article[]; fetchedAt: number };
 
+type SyncBlob = {
+  feeds?: Feed[];
+  read?: string[];
+  ai?: AIConfig | null;
+  updatedAt: number;
+};
+
+type SyncStatus =
+  | { state: "off" }
+  | { state: "pulling" }
+  | { state: "idle"; updatedAt: number | null }
+  | { state: "syncing" }
+  | { state: "error"; error: string };
+
 export function Reader() {
+  const { data: session, status: authStatus } = useSession();
   const [feeds, setFeeds] = useState<Feed[]>([]);
   const [aiConfig, setAIConfig] = useState<AIConfig | null>(null);
   const [readSet, setReadSet] = useState<Set<string>>(new Set());
@@ -31,6 +47,9 @@ export function Reader() {
   const [summarizing, setSummarizing] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
+  const syncReady = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration after mount
@@ -40,7 +59,7 @@ export function Reader() {
     setHydrated(true);
   }, []);
 
-  const refreshFeed = useCallback(async (feed: Feed) => {
+  async function refreshFeed(feed: Feed) {
     setFeedStates((prev) => ({ ...prev, [feed.id]: { status: "loading" } }));
     try {
       const res = await fetch(`/api/feed?url=${encodeURIComponent(feed.url)}`);
@@ -70,7 +89,100 @@ export function Reader() {
         [feed.id]: { status: "error", error: message },
       }));
     }
-  }, []);
+  }
+
+  async function pushBlob(
+    nextFeeds: Feed[],
+    nextRead: Set<string>,
+    nextAI: AIConfig | null,
+  ) {
+    setSyncStatus({ state: "syncing" });
+    try {
+      const res = await fetch("/api/sync", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          feeds: nextFeeds,
+          read: Array.from(nextRead),
+          ai: nextAI,
+        }),
+      });
+      const data = (await res.json()) as {
+        updatedAt?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setSyncStatus({
+        state: "idle",
+        updatedAt: data.updatedAt ?? Date.now(),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sync failed";
+      setSyncStatus({ state: "error", error: message });
+    }
+  }
+
+  // Pull from server on sign-in, merge with local
+  useEffect(() => {
+    if (!hydrated) return;
+    if (authStatus !== "authenticated") {
+      syncReady.current = false;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset sync state on sign-out
+      setSyncStatus({ state: "off" });
+      return;
+    }
+    let cancelled = false;
+    setSyncStatus({ state: "pulling" });
+    (async () => {
+      try {
+        const res = await fetch("/api/sync");
+        const data = (await res.json()) as {
+          blob?: SyncBlob | null;
+          error?: string;
+        };
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        if (cancelled) return;
+        const remote = data.blob;
+        const localFeeds = loadFeeds();
+        const localRead = loadRead();
+        const localAI = loadAIConfig();
+        const mergedFeeds = mergeFeeds(localFeeds, remote?.feeds ?? []);
+        const mergedRead = new Set<string>([
+          ...localRead,
+          ...(remote?.read ?? []),
+        ]);
+        const mergedAI = remote?.ai ?? localAI;
+        setFeeds(mergedFeeds);
+        setReadSet(mergedRead);
+        setAIConfig(mergedAI);
+        saveFeeds(mergedFeeds);
+        saveRead(mergedRead);
+        saveAIConfig(mergedAI);
+        syncReady.current = true;
+        setSyncStatus({ state: "idle", updatedAt: remote?.updatedAt ?? null });
+        void pushBlob(mergedFeeds, mergedRead, mergedAI);
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : "Sync failed";
+        setSyncStatus({ state: "error", error: message });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus, hydrated]);
+
+  // Debounced push on any change after initial sync
+  useEffect(() => {
+    if (!syncReady.current) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      void pushBlob(feeds, readSet, aiConfig);
+    }, 1500);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [feeds, readSet, aiConfig]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -80,7 +192,7 @@ export function Reader() {
         void refreshFeed(feed);
       }
     }
-  }, [feeds, hydrated, feedStates, refreshFeed]);
+  }, [feeds, hydrated, feedStates]);
 
   const allArticles = useMemo(() => {
     const list: Article[] = [];
@@ -247,6 +359,11 @@ export function Reader() {
             ⚙
           </button>
         </div>
+        <AccountBar
+          authStatus={authStatus}
+          user={session?.user}
+          syncStatus={syncStatus}
+        />
         <div className="px-4 py-2 flex items-center gap-2">
           <button
             onClick={() => {
@@ -498,6 +615,104 @@ export function Reader() {
       )}
     </div>
   );
+}
+
+function AccountBar({
+  authStatus,
+  user,
+  syncStatus,
+}: {
+  authStatus: "loading" | "authenticated" | "unauthenticated";
+  user: { name?: string | null; image?: string | null } | undefined;
+  syncStatus: SyncStatus;
+}) {
+  return (
+    <div className="px-4 py-2 border-b border-border flex items-center gap-2 min-h-[3rem]">
+      {authStatus === "authenticated" ? (
+        <>
+          {user?.image && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={user.image}
+              alt=""
+              className="w-6 h-6 rounded-full"
+              referrerPolicy="no-referrer"
+            />
+          )}
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium truncate">
+              {user?.name || "Signed in"}
+            </div>
+            <div className="text-[10px] opacity-60 truncate">
+              {syncLabel(syncStatus)}
+            </div>
+          </div>
+          <button
+            onClick={() => signOut()}
+            className="text-xs rounded px-2 py-1 hover:bg-background"
+            title="Sign out"
+          >
+            ⎋
+          </button>
+        </>
+      ) : authStatus === "loading" ? (
+        <span className="text-xs opacity-60">…</span>
+      ) : (
+        <button
+          onClick={() => signIn("github")}
+          className="w-full text-xs rounded border border-border px-2 py-1.5 hover:bg-background flex items-center justify-center gap-2"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          Sign in with GitHub to sync
+        </button>
+      )}
+    </div>
+  );
+}
+
+function syncLabel(s: SyncStatus): string {
+  switch (s.state) {
+    case "off":
+      return "Local only";
+    case "pulling":
+      return "Pulling…";
+    case "syncing":
+      return "Syncing…";
+    case "idle":
+      return s.updatedAt
+        ? `Synced ${formatRelative(s.updatedAt)}`
+        : "Synced";
+    case "error":
+      return `Sync error: ${s.error}`;
+  }
+}
+
+function formatRelative(ts: number): string {
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+function mergeFeeds(local: Feed[], remote: Feed[]): Feed[] {
+  const byUrl = new Map<string, Feed>();
+  for (const f of local) byUrl.set(f.url, f);
+  for (const f of remote) {
+    const existing = byUrl.get(f.url);
+    if (existing) {
+      byUrl.set(f.url, {
+        ...existing,
+        ...f,
+        addedAt: Math.min(existing.addedAt, f.addedAt),
+      });
+    } else {
+      byUrl.set(f.url, f);
+    }
+  }
+  return Array.from(byUrl.values()).sort((a, b) => a.addedAt - b.addedAt);
 }
 
 function MobileReader({
