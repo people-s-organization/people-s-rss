@@ -25,29 +25,74 @@ function getIconFromElement(el: Element): Element | null {
   return null;
 }
 
+// Descend through single-block wrappers (e.g. <div><p>text</p></div>) to find
+// the actual text-bearing target paragraph.
+function resolveMergeTarget(next: Element): Element | null {
+  const tag = next.tagName.toLowerCase();
+  if (MERGE_TARGET_TAGS.has(tag)) {
+    return (next.textContent ?? "").trim() ? next : null;
+  }
+  if (tag === "div") {
+    const children = Array.from(next.children);
+    if (children.length === 1) {
+      return resolveMergeTarget(children[0]);
+    }
+  }
+  return null;
+}
+
+function unwrapPureDivs(doc: Document): void {
+  let changed = true;
+  let guard = 0;
+  while (changed && guard++ < 20) {
+    changed = false;
+    for (const div of Array.from(doc.body.querySelectorAll("div"))) {
+      if (div === doc.body) continue;
+      const children = Array.from(div.children);
+      if (children.length !== 1) continue;
+      // No bare text inside the div besides whitespace
+      const hasNonWhitespaceText = Array.from(div.childNodes).some(
+        (n) => n.nodeType === 3 && ((n.textContent ?? "").trim().length > 0),
+      );
+      if (hasNonWhitespaceText) continue;
+      div.replaceWith(children[0]);
+      changed = true;
+    }
+  }
+}
+
 export function mergeIcons(doc: Document): void {
-  Array.from(doc.querySelectorAll("p")).forEach((p) => {
+  // Pass 1: collapse text-emoji <p> into the following block
+  Array.from(doc.body.querySelectorAll("p")).forEach((p) => {
     if (!isEmojiOnlyParagraph(p)) return;
     const next = p.nextElementSibling;
-    if (!next || !MERGE_TARGET_TAGS.has(next.tagName.toLowerCase())) return;
-    if (!(next.textContent ?? "").trim()) return;
+    if (!next) return;
+    const target = resolveMergeTarget(next);
+    if (!target) return;
     const prefix = doc.createTextNode(`${(p.textContent ?? "").trim()} `);
-    next.insertBefore(prefix, next.firstChild);
+    target.insertBefore(prefix, target.firstChild);
     p.remove();
   });
 
+  // Pass 2: collapse image-icon blocks into the following text block
   Array.from(doc.body.querySelectorAll("*")).forEach((el) => {
+    if (!el.parentNode) return; // already removed above
     const icon = getIconFromElement(el);
     if (!icon) return;
     const next = el.nextElementSibling;
-    if (!next || !MERGE_TARGET_TAGS.has(next.tagName.toLowerCase())) return;
-    if (!(next.textContent ?? "").trim()) return;
+    if (!next) return;
+    const target = resolveMergeTarget(next);
+    if (!target) return;
     const clone = icon.cloneNode(true) as Element;
     clone.classList.add("prss-icon");
-    next.insertBefore(doc.createTextNode(" "), next.firstChild);
-    next.insertBefore(clone, next.firstChild);
+    target.insertBefore(doc.createTextNode(" "), target.firstChild);
+    target.insertBefore(clone, target.firstChild);
     el.remove();
   });
+
+  // Pass 3: flatten leftover single-child <div> wrappers so the layout
+  // collapses cleanly (iFanr-style nested divs)
+  unwrapPureDivs(doc);
 }
 
 export function assignHeadingIds(doc: Document): void {
