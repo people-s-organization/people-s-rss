@@ -5,6 +5,7 @@ import type { AIConfig, Feed } from "./types";
 const FEEDS_KEY = "prss:feeds";
 const AI_KEY = "prss:ai";
 const READ_KEY = "prss:read";
+const SUMMARIES_KEY = "prss:summaries";
 
 export function loadFeeds(): Feed[] {
   if (typeof window === "undefined") return [];
@@ -78,6 +79,36 @@ export function saveRead(read: Set<string>) {
   const arr = Array.from(read);
   const trimmed = arr.length > 5000 ? arr.slice(-5000) : arr;
   window.localStorage.setItem(READ_KEY, JSON.stringify(trimmed));
+}
+
+export function loadSummaries(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(SUMMARIES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "string") out[k] = v;
+      }
+      return out;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveSummaries(map: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  const entries = Object.entries(map);
+  // Keep only the most recent 1000 to bound localStorage usage.
+  const trimmed =
+    entries.length > 1000
+      ? Object.fromEntries(entries.slice(entries.length - 1000))
+      : map;
+  window.localStorage.setItem(SUMMARIES_KEY, JSON.stringify(trimmed));
 }
 
 export function randomId(): string {

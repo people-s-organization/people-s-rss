@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
+import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,97 +96,10 @@ function isImageElement(tag: string): boolean {
   return tag === "img" || tag === "source";
 }
 
-const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
-
-function isEmojiOnlyParagraph(p: Element): boolean {
-  // Only emoji text, nothing else
-  if (p.children.length > 0) return false;
-  const trimmed = (p.textContent ?? "").trim();
-  if (!trimmed || trimmed.length > 4) return false;
-  return EMOJI_ONLY.test(trimmed);
-}
-
-function isImageOnlyParagraph(p: Element): Element | null {
-  // Returns the single <img> if the <p> is essentially just one image
-  const text = (p.textContent ?? "").trim();
-  if (text) return null;
-  const imgs = p.querySelectorAll("img");
-  if (imgs.length !== 1) return null;
-  return imgs[0];
-}
-
-const MERGE_TARGET_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6"]);
-
-function getIconFromElement(el: Element): Element | null {
-  const tag = el.tagName.toLowerCase();
-  if (tag === "img") return el;
-  if (tag === "p" || tag === "div") return isImageOnlyParagraph(el);
-  return null;
-}
-
-function mergeEmojiHeadings(doc: Document): void {
-  // Pass 1: merge text-emoji-only <p> into the following <p>
-  Array.from(doc.querySelectorAll("p")).forEach((p) => {
-    if (!isEmojiOnlyParagraph(p)) return;
-    const next = p.nextElementSibling;
-    if (!next || !MERGE_TARGET_TAGS.has(next.tagName.toLowerCase())) return;
-    if (!(next.textContent ?? "").trim()) return;
-    const prefix = doc.createTextNode(`${(p.textContent ?? "").trim()} `);
-    next.insertBefore(prefix, next.firstChild);
-    p.remove();
-  });
-
-  // Pass 2: merge an image (bare <img> or img-only <p>/<div>) sitting right
-  // before a <p> or heading.
-  Array.from(doc.body.querySelectorAll("*")).forEach((el) => {
-    const icon = getIconFromElement(el);
-    if (!icon) return;
-    const next = el.nextElementSibling;
-    if (!next || !MERGE_TARGET_TAGS.has(next.tagName.toLowerCase())) return;
-    if (!(next.textContent ?? "").trim()) return;
-    const clone = icon.cloneNode(true) as Element;
-    clone.classList.add("prss-icon");
-    next.insertBefore(doc.createTextNode(" "), next.firstChild);
-    next.insertBefore(clone, next.firstChild);
-    el.remove();
-  });
-}
-
-function assignHeadingIds(doc: Document): void {
-  const used = new Set<string>();
-  doc.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach((h) => {
-    if (h.id) {
-      used.add(h.id);
-      return;
-    }
-    const text = (h.textContent ?? "").trim();
-    if (!text) return;
-    const base = slugify(text);
-    let id = base || "section";
-    let i = 2;
-    while (used.has(id)) {
-      id = `${base}-${i++}`;
-    }
-    used.add(id);
-    h.setAttribute("id", id);
-  });
-}
-
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^\p{L}\p{N}\s-]/gu, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .slice(0, 60);
-}
-
 function resolveUrls(html: string, baseUrl: string): string {
   const wrap = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
   const doc = wrap.window.document;
-  mergeEmojiHeadings(doc);
+  mergeIcons(doc);
   assignHeadingIds(doc);
   doc.querySelectorAll("[src]").forEach((el) => {
     const v = el.getAttribute("src");

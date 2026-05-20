@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { AIConfig, AIStyle, Feed } from "@/app/lib/types";
-import { defaultEndpoint, defaultModel, detectStyle } from "@/app/lib/aiProviders";
+import { defaultEndpoint, detectStyle } from "@/app/lib/aiProviders";
 
 type Props = {
   open: boolean;
@@ -43,21 +43,17 @@ function SettingsDialogBody({
     aiConfig?.endpoint ?? defaultEndpoint(aiConfig?.style ?? "openai"),
   );
   const [apiKey, setApiKey] = useState(aiConfig?.apiKey ?? "");
-  const [model, setModel] = useState(
-    aiConfig?.model ?? defaultModel(aiConfig?.style ?? "openai"),
-  );
+  const [model, setModel] = useState(aiConfig?.model ?? "");
   const [models, setModels] = useState<{ id: string; label?: string }[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
-  const [aiSaved, setAiSaved] = useState(false);
 
   function handleStyleChange(next: AIStyle) {
     setStyle(next);
     setModels([]);
+    setModel("");
     setModelsError(null);
-    // Switch defaults if user hasn't customized
     if (endpoint === defaultEndpoint(style)) setEndpoint(defaultEndpoint(next));
-    if (model === defaultModel(style)) setModel(defaultModel(next));
   }
 
   function handleEndpointChange(value: string) {
@@ -120,18 +116,14 @@ function SettingsDialogBody({
   }
 
   function handleSaveAI() {
-    if (!endpoint.trim() || !apiKey.trim() || !model.trim()) {
-      onSaveAI(null);
-    } else {
-      onSaveAI({
-        endpoint: endpoint.trim(),
-        apiKey: apiKey.trim(),
-        model: model.trim(),
-        style,
-      });
-    }
-    setAiSaved(true);
-    setTimeout(() => setAiSaved(false), 1500);
+    if (!endpoint.trim() || !apiKey.trim() || !model.trim()) return;
+    onSaveAI({
+      endpoint: endpoint.trim(),
+      apiKey: apiKey.trim(),
+      model: model.trim(),
+      style,
+    });
+    onClose();
   }
 
   return (
@@ -328,13 +320,16 @@ function SettingsDialogBody({
                   <select
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
-                    className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
+                    disabled={models.length === 0 && !model}
+                    className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60 disabled:opacity-60"
                   >
+                    <option value="">
+                      {models.length === 0
+                        ? "Click Fetch to load models…"
+                        : "Select a model…"}
+                    </option>
                     {!models.find((m) => m.id === model) && model && (
-                      <option value={model}>{model}</option>
-                    )}
-                    {models.length === 0 && !model && (
-                      <option value="">Fetch models to pick one…</option>
+                      <option value={model}>{model} (saved)</option>
                     )}
                     {models.map((m) => (
                       <option key={m.id} value={m.id}>
@@ -364,9 +359,12 @@ function SettingsDialogBody({
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSaveAI}
-                  className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white"
+                  disabled={
+                    !endpoint.trim() || !apiKey.trim() || !model.trim()
+                  }
+                  className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  Save
+                  Save &amp; close
                 </button>
                 {aiConfig && (
                   <button
@@ -375,7 +373,7 @@ function SettingsDialogBody({
                       setStyle("openai");
                       setEndpoint(defaultEndpoint("openai"));
                       setApiKey("");
-                      setModel(defaultModel("openai"));
+                      setModel("");
                       setModels([]);
                     }}
                     className="rounded border border-border px-3 py-1.5 text-sm"
@@ -383,9 +381,15 @@ function SettingsDialogBody({
                     Clear
                   </button>
                 )}
-                {aiSaved && (
-                  <span className="text-sm text-green-600">Saved</span>
-                )}
+                {!endpoint.trim() || !apiKey.trim() ? (
+                  <span className="text-xs opacity-60">
+                    Fill endpoint and key first.
+                  </span>
+                ) : !model.trim() ? (
+                  <span className="text-xs opacity-60">
+                    Pick a model — click ↻ Fetch above.
+                  </span>
+                ) : null}
               </div>
             </div>
           )}

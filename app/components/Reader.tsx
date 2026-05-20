@@ -7,10 +7,12 @@ import {
   loadAIConfig,
   loadFeeds,
   loadRead,
+  loadSummaries,
   randomId,
   saveAIConfig,
   saveFeeds,
   saveRead,
+  saveSummaries,
 } from "@/app/lib/storage";
 import { SettingsDialog } from "./SettingsDialog";
 
@@ -64,6 +66,7 @@ export function Reader() {
     setFeeds(loadFeeds());
     setAIConfig(loadAIConfig());
     setReadSet(loadRead());
+    setSummaries(loadSummaries());
     setHydrated(true);
   }, []);
 
@@ -424,7 +427,11 @@ export function Reader() {
       if (!res.ok || !data.summary) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      setSummaries((prev) => ({ ...prev, [article.id]: data.summary! }));
+      setSummaries((prev) => {
+        const next = { ...prev, [article.id]: data.summary! };
+        saveSummaries(next);
+        return next;
+      });
     } catch (err) {
       setSummaryError(err instanceof Error ? err.message : "Summarize failed");
     } finally {

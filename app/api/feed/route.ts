@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { parseFeedXml } from "@/app/lib/rss";
+import { normalizeArticleHtml } from "@/app/lib/articleHtml";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,6 +50,13 @@ export async function GET(request: Request) {
     }
     const xml = new TextDecoder("utf-8").decode(buf);
     const feed = parseFeedXml(xml);
+    for (const item of feed.items) {
+      if (item.contentHtml) {
+        try {
+          item.contentHtml = normalizeArticleHtml(item.contentHtml, item.link);
+        } catch {}
+      }
+    }
     return NextResponse.json(
       { feed },
       {
