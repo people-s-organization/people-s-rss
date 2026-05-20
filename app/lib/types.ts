@@ -2,6 +2,7 @@ export type Feed = {
   id: string;
   url: string;
   title: string;
+  category?: string;
   addedAt: number;
 };
 

@@ -46,7 +46,13 @@ export function Reader() {
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [summarizing, setSummarizing] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [fullContent, setFullContent] = useState<Record<string, string>>({});
+  const [extracting, setExtracting] = useState<string | null>(null);
+  const [extractError, setExtractError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
+    new Set(),
+  );
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -206,8 +212,32 @@ export function Reader() {
 
   const visibleArticles = useMemo(() => {
     if (selectedFeedId === "all") return allArticles;
+    if (typeof selectedFeedId === "string" && selectedFeedId.startsWith("cat:")) {
+      const cat = selectedFeedId.slice(4);
+      const feedIds = new Set(
+        feeds.filter((f) => (f.category ?? "") === cat).map((f) => f.id),
+      );
+      return allArticles.filter((a) => feedIds.has(a.feedId));
+    }
     return allArticles.filter((a) => a.feedId === selectedFeedId);
-  }, [allArticles, selectedFeedId]);
+  }, [allArticles, selectedFeedId, feeds]);
+
+  const feedGroups = useMemo(() => {
+    const byCat = new Map<string, Feed[]>();
+    for (const f of feeds) {
+      const k = f.category ?? "";
+      const arr = byCat.get(k);
+      if (arr) arr.push(f);
+      else byCat.set(k, [f]);
+    }
+    return Array.from(byCat.entries())
+      .map(([key, list]) => ({ key, feeds: list }))
+      .sort((a, b) => {
+        if (a.key === "" && b.key !== "") return 1;
+        if (b.key === "" && a.key !== "") return -1;
+        return a.key.localeCompare(b.key);
+      });
+  }, [feeds]);
 
   const selectedArticle = useMemo(
     () => visibleArticles.find((a) => a.id === selectedArticleId) ?? null,
@@ -226,16 +256,21 @@ export function Reader() {
 
   const unreadCounts = useMemo(() => {
     const counts: Record<string, number> = {};
+    const feedToCat = new Map<string, string>();
+    for (const f of feeds) feedToCat.set(f.id, f.category ?? "");
     let all = 0;
     for (const a of allArticles) {
       if (!readSet.has(a.id)) {
         counts[a.feedId] = (counts[a.feedId] ?? 0) + 1;
+        const cat = feedToCat.get(a.feedId) ?? "";
+        const key = `cat:${cat}`;
+        counts[key] = (counts[key] ?? 0) + 1;
         all += 1;
       }
     }
     counts.__all = all;
     return counts;
-  }, [allArticles, readSet]);
+  }, [allArticles, readSet, feeds]);
 
   async function handleAddFeed(url: string) {
     const res = await fetch(`/api/feed?url=${encodeURIComponent(url)}`);
@@ -298,6 +333,15 @@ export function Reader() {
     });
   }
 
+  function handleSetCategory(id: string, category: string) {
+    const value = category.trim();
+    const next = feeds.map((f) =>
+      f.id === id ? { ...f, category: value || undefined } : f,
+    );
+    setFeeds(next);
+    saveFeeds(next);
+  }
+
   function handleSaveAI(cfg: AIConfig | null) {
     setAIConfig(cfg);
     saveAIConfig(cfg);
@@ -308,6 +352,30 @@ export function Reader() {
     for (const a of visibleArticles) next.add(a.id);
     setReadSet(next);
     saveRead(next);
+  }
+
+  async function handleExtractFull(article: Article) {
+    if (!article.link) return;
+    setExtracting(article.id);
+    setExtractError(null);
+    try {
+      const res = await fetch(
+        `/api/extract?url=${encodeURIComponent(article.link)}`,
+      );
+      const data = (await res.json()) as {
+        contentHtml?: string;
+        contentText?: string;
+        error?: string;
+      };
+      if (!res.ok || !data.contentHtml) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      setFullContent((prev) => ({ ...prev, [article.id]: data.contentHtml! }));
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : "Extract failed");
+    } finally {
+      setExtracting(null);
+    }
   }
 
   async function handleSummarize(article: Article) {
@@ -392,33 +460,31 @@ export function Reader() {
               <span className="text-xs opacity-70">{unreadCounts.__all}</span>
             )}
           </button>
-          <div className="mt-2 space-y-0.5">
-            {feeds.map((f) => {
-              const s = feedStates[f.id];
-              return (
-                <button
-                  key={f.id}
-                  onClick={() => {
-                    setSelectedFeedId(f.id);
-                    setSelectedArticleId(null);
-                  }}
-                  className={`w-full text-left rounded px-3 py-1.5 text-sm flex items-center justify-between gap-2 ${
-                    selectedFeedId === f.id
-                      ? "bg-background font-medium"
-                      : "hover:bg-background/60"
-                  }`}
-                >
-                  <span className="truncate">{f.title}</span>
-                  <span className="text-xs opacity-70 shrink-0">
-                    {s?.status === "loading"
-                      ? "…"
-                      : s?.status === "error"
-                        ? "!"
-                        : unreadCounts[f.id] || ""}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="mt-2 space-y-2">
+            {feedGroups.map((group) => (
+              <FeedGroup
+                key={group.key}
+                title={group.key === "" ? "Uncategorized" : group.key}
+                showHeading={group.key !== "" || feedGroups.length > 1}
+                collapsed={collapsedCategories.has(group.key)}
+                onToggle={() =>
+                  setCollapsedCategories((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(group.key)) next.delete(group.key);
+                    else next.add(group.key);
+                    return next;
+                  })
+                }
+                feeds={group.feeds}
+                feedStates={feedStates}
+                selectedFeedId={selectedFeedId}
+                unreadCounts={unreadCounts}
+                onSelect={(id) => {
+                  setSelectedFeedId(id);
+                  setSelectedArticleId(null);
+                }}
+              />
+            ))}
           </div>
           {feeds.length === 0 && hydrated && (
             <p className="text-xs opacity-60 px-3 mt-4">
@@ -442,7 +508,10 @@ export function Reader() {
           <h2 className="text-sm font-semibold truncate">
             {selectedFeedId === "all"
               ? "All articles"
-              : feeds.find((f) => f.id === selectedFeedId)?.title ?? "Articles"}
+              : typeof selectedFeedId === "string" &&
+                  selectedFeedId.startsWith("cat:")
+                ? selectedFeedId.slice(4) || "Uncategorized"
+                : feeds.find((f) => f.id === selectedFeedId)?.title ?? "Articles"}
           </h2>
           <button
             onClick={markAllRead}
@@ -529,7 +598,7 @@ export function Reader() {
               <h1 className="text-2xl font-semibold leading-tight tracking-tight">
                 {selectedArticle.title}
               </h1>
-              <div className="mt-3 flex items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <a
                   href={selectedArticle.link}
                   target="_blank"
@@ -538,6 +607,19 @@ export function Reader() {
                 >
                   Open original ↗
                 </a>
+                <button
+                  onClick={() => handleExtractFull(selectedArticle)}
+                  disabled={
+                    extracting === selectedArticle.id || !selectedArticle.link
+                  }
+                  className="text-sm rounded border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
+                >
+                  {extracting === selectedArticle.id
+                    ? "Loading…"
+                    : fullContent[selectedArticle.id]
+                      ? "Reload full"
+                      : "📖 Load full article"}
+                </button>
                 <button
                   onClick={() => handleSummarize(selectedArticle)}
                   disabled={summarizing === selectedArticle.id}
@@ -553,6 +635,9 @@ export function Reader() {
               {summaryError && (
                 <p className="text-sm text-red-500 mt-2">{summaryError}</p>
               )}
+              {extractError && (
+                <p className="text-sm text-red-500 mt-2">{extractError}</p>
+              )}
               {summaries[selectedArticle.id] && (
                 <div className="mt-4 rounded border border-border bg-muted/50 p-4">
                   <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">
@@ -565,7 +650,13 @@ export function Reader() {
               )}
             </header>
             <div className="px-8 py-6 max-w-2xl prose-content">
-              {selectedArticle.contentHtml ? (
+              {fullContent[selectedArticle.id] ? (
+                <div
+                  dangerouslySetInnerHTML={{
+                    __html: fullContent[selectedArticle.id],
+                  }}
+                />
+              ) : selectedArticle.contentHtml ? (
                 <div
                   dangerouslySetInnerHTML={{
                     __html: selectedArticle.contentHtml,
@@ -599,6 +690,7 @@ export function Reader() {
         onAddFeed={handleAddFeed}
         onRemoveFeed={handleRemoveFeed}
         onRenameFeed={handleRenameFeed}
+        onSetCategory={handleSetCategory}
         aiConfig={aiConfig}
         onSaveAI={handleSaveAI}
       />
@@ -611,7 +703,80 @@ export function Reader() {
           summarizing={summarizing === selectedArticle.id}
           summaryError={summaryError}
           onSummarize={() => handleSummarize(selectedArticle)}
+          fullHtml={fullContent[selectedArticle.id]}
+          extracting={extracting === selectedArticle.id}
+          extractError={extractError}
+          onExtract={() => handleExtractFull(selectedArticle)}
         />
+      )}
+    </div>
+  );
+}
+
+function FeedGroup({
+  title,
+  showHeading,
+  collapsed,
+  onToggle,
+  feeds,
+  feedStates,
+  selectedFeedId,
+  unreadCounts,
+  onSelect,
+}: {
+  title: string;
+  showHeading: boolean;
+  collapsed: boolean;
+  onToggle: () => void;
+  feeds: Feed[];
+  feedStates: Record<string, FeedState>;
+  selectedFeedId: string | "all";
+  unreadCounts: Record<string, number>;
+  onSelect: (id: string) => void;
+}) {
+  const catKey = `cat:${title === "Uncategorized" ? "" : title}`;
+  return (
+    <div>
+      {showHeading && (
+        <button
+          onClick={onToggle}
+          className="w-full text-left px-3 py-1 text-[10px] uppercase tracking-wider opacity-60 hover:opacity-100 flex items-center gap-1.5"
+        >
+          <span className="inline-block w-3">{collapsed ? "▸" : "▾"}</span>
+          <span className="flex-1 truncate">{title}</span>
+          {unreadCounts[catKey] ? (
+            <span className="text-[10px] opacity-70">
+              {unreadCounts[catKey]}
+            </span>
+          ) : null}
+        </button>
+      )}
+      {!collapsed && (
+        <div className="space-y-0.5">
+          {feeds.map((f) => {
+            const s = feedStates[f.id];
+            return (
+              <button
+                key={f.id}
+                onClick={() => onSelect(f.id)}
+                className={`w-full text-left rounded px-3 py-1.5 text-sm flex items-center justify-between gap-2 ${
+                  selectedFeedId === f.id
+                    ? "bg-background font-medium"
+                    : "hover:bg-background/60"
+                }`}
+              >
+                <span className="truncate">{f.title}</span>
+                <span className="text-xs opacity-70 shrink-0">
+                  {s?.status === "loading"
+                    ? "…"
+                    : s?.status === "error"
+                      ? "!"
+                      : unreadCounts[f.id] || ""}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -722,6 +887,10 @@ function MobileReader({
   summarizing,
   summaryError,
   onSummarize,
+  fullHtml,
+  extracting,
+  extractError,
+  onExtract,
 }: {
   article: Article;
   onClose: () => void;
@@ -729,6 +898,10 @@ function MobileReader({
   summarizing: boolean;
   summaryError: string | null;
   onSummarize: () => void;
+  fullHtml?: string;
+  extracting: boolean;
+  extractError: string | null;
+  onExtract: () => void;
 }) {
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
@@ -748,6 +921,14 @@ function MobileReader({
         >
           Open ↗
         </a>
+        <button
+          onClick={onExtract}
+          disabled={extracting || !article.link}
+          className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50"
+          title={fullHtml ? "Reload full article" : "Load full article"}
+        >
+          {extracting ? "…" : "📖"}
+        </button>
         <button
           onClick={onSummarize}
           disabled={summarizing}
@@ -772,6 +953,9 @@ function MobileReader({
         {summaryError && (
           <p className="text-sm text-red-500 mb-3">{summaryError}</p>
         )}
+        {extractError && (
+          <p className="text-sm text-red-500 mb-3">{extractError}</p>
+        )}
         {summary && (
           <div className="mb-4 rounded border border-border bg-muted/50 p-3">
             <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-1">
@@ -783,7 +967,9 @@ function MobileReader({
           </div>
         )}
         <div className="prose-content">
-          {article.contentHtml ? (
+          {fullHtml ? (
+            <div dangerouslySetInnerHTML={{ __html: fullHtml }} />
+          ) : article.contentHtml ? (
             <div dangerouslySetInnerHTML={{ __html: article.contentHtml }} />
           ) : (
             <p className="opacity-60 text-sm">No content provided.</p>

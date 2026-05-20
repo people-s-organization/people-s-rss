@@ -10,6 +10,7 @@ type Props = {
   onAddFeed: (url: string) => Promise<void>;
   onRemoveFeed: (id: string) => void;
   onRenameFeed: (id: string, title: string) => void;
+  onSetCategory: (id: string, category: string) => void;
   aiConfig: AIConfig | null;
   onSaveAI: (cfg: AIConfig | null) => void;
 };
@@ -25,6 +26,7 @@ function SettingsDialogBody({
   onAddFeed,
   onRemoveFeed,
   onRenameFeed,
+  onSetCategory,
   aiConfig,
   onSaveAI,
 }: Props) {
@@ -142,35 +144,63 @@ function SettingsDialogBody({
                   </p>
                 ) : (
                   <ul className="space-y-2">
-                    {feeds.map((f) => (
-                      <li
-                        key={f.id}
-                        className="flex items-center gap-2 rounded border border-border p-2"
-                      >
-                        <input
-                          defaultValue={f.title}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            if (v && v !== f.title) onRenameFeed(f.id, v);
-                          }}
-                          className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
-                        />
-                        <a
-                          href={f.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs opacity-60 hover:opacity-100 truncate max-w-[12rem]"
+                    {feeds.map((f) => {
+                      const datalistId = `prss-cats-${f.id}`;
+                      return (
+                        <li
+                          key={f.id}
+                          className="rounded border border-border p-2"
                         >
-                          {f.url}
-                        </a>
-                        <button
-                          onClick={() => onRemoveFeed(f.id)}
-                          className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500"
-                        >
-                          Remove
-                        </button>
-                      </li>
-                    ))}
+                          <div className="flex items-center gap-2">
+                            <input
+                              defaultValue={f.title}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v && v !== f.title) onRenameFeed(f.id, v);
+                              }}
+                              className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
+                            />
+                            <button
+                              onClick={() => onRemoveFeed(f.id)}
+                              className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            <input
+                              defaultValue={f.category ?? ""}
+                              placeholder="Category (e.g. Tech, News)"
+                              list={datalistId}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                if (v !== (f.category ?? "")) onSetCategory(f.id, v);
+                              }}
+                              className="w-40 shrink-0 bg-transparent text-xs rounded border border-border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent/60"
+                            />
+                            <datalist id={datalistId}>
+                              {Array.from(
+                                new Set(
+                                  feeds
+                                    .map((x) => x.category)
+                                    .filter((c): c is string => !!c),
+                                ),
+                              ).map((c) => (
+                                <option key={c} value={c} />
+                              ))}
+                            </datalist>
+                            <a
+                              href={f.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs opacity-60 hover:opacity-100 truncate flex-1"
+                            >
+                              {f.url}
+                            </a>
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
