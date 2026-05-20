@@ -579,20 +579,18 @@ export function Reader() {
         </nav>
       </aside>
 
-      <section className="w-full md:w-96 shrink-0 border-r border-border flex flex-col">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-2">
-          <div className="md:hidden">
-            <button
-              aria-label="Settings"
-              onClick={() => setSettingsOpen(true)}
-              className="text-sm rounded px-2 py-1 hover:bg-muted"
-            >
-              ⚙
-            </button>
-          </div>
-          <h2 className="text-sm font-semibold truncate flex-1">
+      <section className="w-full md:w-96 shrink-0 border-r border-border flex flex-col min-w-0">
+        <div className="px-3 sm:px-4 py-3 border-b border-border flex items-center gap-2 flex-nowrap min-w-0">
+          <button
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+            className="md:hidden text-sm rounded px-2 py-1 hover:bg-muted shrink-0"
+          >
+            ⚙
+          </button>
+          <h2 className="text-sm font-semibold truncate flex-1 min-w-0">
             {selectedFeedId === "all"
-              ? "All articles"
+              ? "All"
               : typeof selectedFeedId === "string" &&
                   selectedFeedId.startsWith("cat:")
                 ? selectedFeedId.slice(4) || "Uncategorized"
@@ -669,12 +667,8 @@ export function Reader() {
                   <button
                     onClick={() => selectArticle(a.id)}
                     className={`w-full text-left p-3 ${
-                      isSelected
-                        ? "bg-muted"
-                        : isRead
-                          ? "hover:bg-muted/60"
-                          : "hover:bg-muted/60"
-                    } ${isRead ? "opacity-55" : ""}`}
+                      isSelected ? "bg-muted" : "hover:bg-muted/60"
+                    } ${isRead ? "opacity-70" : ""}`}
                   >
                     <div className="flex items-center gap-2 text-xs opacity-70 mb-1">
                       {isRead ? (
