@@ -22,8 +22,10 @@ import {
   saveSummaries,
 } from "@/app/lib/storage";
 
-const DEFAULT_FEEDS: { url: string; title: string }[] = [
-  { url: "https://www.ifanr.com/feed", title: "爱范儿" },
+const DEFAULT_FEEDS: { url: string; title: string; category?: string }[] = [
+  { url: "https://xueqiu.com/hots/topic/rss", title: "雪球热门", category: "投资" },
+  { url: "https://sspai.com/feed", title: "少数派", category: "科技" },
+  { url: "https://www.ifanr.com/feed", title: "爱范儿", category: "科技" },
 ];
 import { SettingsDialog } from "./SettingsDialog";
 
@@ -86,11 +88,13 @@ export function Reader() {
   useEffect(() => {
     let initialFeeds = loadFeeds();
     if (initialFeeds.length === 0 && !isInitialized()) {
-      initialFeeds = DEFAULT_FEEDS.map((d) => ({
+      const now = Date.now();
+      initialFeeds = DEFAULT_FEEDS.map((d, i) => ({
         id: randomId(),
         url: d.url,
         title: d.title,
-        addedAt: Date.now(),
+        category: d.category,
+        addedAt: now + i,
       }));
       saveFeeds(initialFeeds);
     }
