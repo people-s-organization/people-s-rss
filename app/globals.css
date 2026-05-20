@@ -3,11 +3,17 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  --muted: #f5f5f5;
+  --border: #e5e5e5;
+  --accent: #2563eb;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -16,11 +22,58 @@
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --muted: #161616;
+    --border: #262626;
+    --accent: #60a5fa;
   }
 }
 
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.prose-content {
+  line-height: 1.65;
+}
+.prose-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-content p {
+  margin: 0.75rem 0;
+}
+.prose-content h1,
+.prose-content h2,
+.prose-content h3 {
+  font-weight: 600;
+  margin: 1.25rem 0 0.5rem;
+}
+.prose-content img,
+.prose-content video {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.prose-content pre {
+  background: var(--muted);
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.prose-content code {
+  background: var(--muted);
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+}
+.prose-content blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  margin: 0.75rem 0;
+  color: color-mix(in oklab, var(--foreground) 75%, transparent);
 }

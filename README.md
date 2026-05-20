@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# People's RSS
 
-## Getting Started
+A minimal, self-hosted RSS / Atom reader that runs on Vercel. Bring your own AI key
+to summarize any article in one click.
 
-First, run the development server:
+- **Custom feeds** — add any RSS or Atom URL; data lives in your browser (localStorage).
+- **AI summary, BYO key** — configure any OpenAI-compatible endpoint + key. Requests
+  are proxied through the app server only (no third party, no logging).
+- **Zero database** — feed list, read state, and AI config are stored client-side.
+  Nothing to provision.
+- **Built on Next.js 16 + Tailwind 4**, deploys to Vercel with one click.
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Deploy to Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The easiest path is `vercel deploy` from this directory after running
+`npm i -g vercel && vercel login`. Or push to GitHub and import the repo in the
+Vercel dashboard — no environment variables are required for the default
+configuration.
 
-## Learn More
+```bash
+npm i -g vercel
+vercel deploy            # preview
+vercel deploy --prod     # production
+```
 
-To learn more about Next.js, take a look at the following resources:
+## How it works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Surface           | Where                                                          |
+| ----------------- | -------------------------------------------------------------- |
+| Feed list, read state, AI config | Browser `localStorage` (key prefix `prss:`)     |
+| RSS fetch + parse | `GET /api/feed?url=…` — server-side, sanitizes HTML            |
+| AI summarization  | `POST /api/summarize` — forwards to your endpoint + key        |
+| UI                | `app/components/Reader.tsx` (client component)                 |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The server **never** stores your AI key. You paste it once in Settings and it
+lives only in your browser; the `/api/summarize` route just forwards it to the
+upstream endpoint you configured for that single request.
 
-## Deploy on Vercel
+## AI provider compatibility
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Any OpenAI-compatible chat-completions endpoint works. Tested shapes:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- OpenAI (`https://api.openai.com/v1`)
+- OpenRouter, Groq, Together, DeepInfra, Fireworks, etc.
+- Self-hosted: Ollama (`http://localhost:11434/v1`), vLLM, LM Studio, llama.cpp server
+
+Set the **base URL** (we append `/chat/completions`), the **model id**, and your
+**API key**. Pass an empty key for endpoints that don't require auth.
+
+## Security notes
+
+- Feed HTML is sanitized on the server with a strict allowlist (no scripts,
+  iframes, inline event handlers, or `javascript:`/`data:` URLs except images).
+- The `/api/feed` route caps response size at 5 MB and has a 15s timeout.
+- The `/api/summarize` route caps article content at 60k characters and has a
+  60s timeout.
