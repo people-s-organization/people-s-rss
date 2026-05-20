@@ -87,6 +87,14 @@ export async function GET(request: Request) {
   }
 }
 
+function proxyImg(absUrl: string): string {
+  return `/api/image?url=${encodeURIComponent(absUrl)}`;
+}
+
+function isImageElement(tag: string): boolean {
+  return tag === "img" || tag === "source";
+}
+
 function resolveUrls(html: string, baseUrl: string): string {
   const wrap = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
   const doc = wrap.window.document;
@@ -94,7 +102,9 @@ function resolveUrls(html: string, baseUrl: string): string {
     const v = el.getAttribute("src");
     if (!v) return;
     try {
-      el.setAttribute("src", new URL(v, baseUrl).href);
+      const abs = new URL(v, baseUrl).href;
+      const tag = el.tagName.toLowerCase();
+      el.setAttribute("src", isImageElement(tag) ? proxyImg(abs) : abs);
     } catch {}
   });
   doc.querySelectorAll("[href]").forEach((el) => {
@@ -107,6 +117,8 @@ function resolveUrls(html: string, baseUrl: string): string {
   doc.querySelectorAll("[srcset]").forEach((el) => {
     const v = el.getAttribute("srcset");
     if (!v) return;
+    const tag = el.tagName.toLowerCase();
+    const proxy = isImageElement(tag);
     const rewritten = v
       .split(",")
       .map((part) => {
@@ -114,7 +126,8 @@ function resolveUrls(html: string, baseUrl: string): string {
         if (!trimmed) return "";
         const [u, ...rest] = trimmed.split(/\s+/);
         try {
-          return [new URL(u, baseUrl).href, ...rest].join(" ");
+          const abs = new URL(u, baseUrl).href;
+          return [proxy ? proxyImg(abs) : abs, ...rest].join(" ");
         } catch {
           return trimmed;
         }
