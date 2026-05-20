@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
+import { usePullToRefresh } from "@/app/lib/usePullToRefresh";
 import {
   isInitialized,
   loadAIConfig,
@@ -266,6 +267,13 @@ export function Reader() {
   }, [feeds, readSet, aiConfig]);
 
   const autoRefreshedRef = useRef<Set<string>>(new Set());
+  const articleListRef = useRef<HTMLOListElement>(null);
+
+  async function refreshAllFeeds() {
+    await Promise.all(feeds.map((f) => refreshFeed(f)));
+  }
+
+  const pull = usePullToRefresh(articleListRef, refreshAllFeeds);
   useEffect(() => {
     if (!hydrated) return;
     for (const feed of feeds) {
@@ -702,7 +710,26 @@ export function Reader() {
             ✓ all
           </button>
         </div>
-        <ol className="flex-1 overflow-y-auto divide-y divide-border">
+        <PullToRefreshIndicator
+          distance={pull.distance}
+          releasing={pull.releasing}
+          refreshing={pull.refreshing}
+        />
+        <ol
+          ref={articleListRef}
+          className="flex-1 overflow-y-auto divide-y divide-border overscroll-y-contain"
+          style={{
+            transform:
+              pull.distance > 0 || pull.refreshing
+                ? `translateY(${pull.distance}px)`
+                : undefined,
+            transition: pull.refreshing
+              ? "transform 0.2s"
+              : pull.distance > 0
+                ? "none"
+                : "transform 0.2s",
+          }}
+        >
           {visibleArticles.length === 0 ? (
             <li className="p-4 text-sm opacity-60">
               {feeds.length === 0
@@ -1280,6 +1307,50 @@ function SummaryCard({ text }: { text: string }) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function PullToRefreshIndicator({
+  distance,
+  releasing,
+  refreshing,
+}: {
+  distance: number;
+  releasing: boolean;
+  refreshing: boolean;
+}) {
+  if (distance === 0 && !refreshing) return null;
+  const height = refreshing ? 44 : Math.min(60, distance);
+  const label = refreshing
+    ? "Refreshing…"
+    : releasing
+      ? "Release to refresh"
+      : "Pull to refresh";
+  return (
+    <div
+      className="md:hidden flex items-center justify-center gap-2 text-xs opacity-70 overflow-hidden"
+      style={{ height }}
+    >
+      <span
+        className={`inline-block w-4 h-4 ${
+          refreshing
+            ? "animate-spin border-2 border-current border-r-transparent rounded-full"
+            : ""
+        }`}
+        style={
+          !refreshing
+            ? {
+                transform: `rotate(${releasing ? 180 : 0}deg)`,
+                transition: "transform 0.15s",
+              }
+            : undefined
+        }
+        aria-hidden
+      >
+        {!refreshing ? "↓" : ""}
+      </span>
+      <span>{label}</span>
     </div>
   );
 }
