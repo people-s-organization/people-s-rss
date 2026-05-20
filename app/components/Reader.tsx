@@ -4,16 +4,22 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
 import {
+  isInitialized,
   loadAIConfig,
   loadFeeds,
   loadRead,
   loadSummaries,
+  markInitialized,
   randomId,
   saveAIConfig,
   saveFeeds,
   saveRead,
   saveSummaries,
 } from "@/app/lib/storage";
+
+const DEFAULT_FEEDS: { url: string; title: string }[] = [
+  { url: "https://www.ifanr.com/feed", title: "爱范儿" },
+];
 import { SettingsDialog } from "./SettingsDialog";
 
 const FEED_FULL_THRESHOLD = 1500;
@@ -64,8 +70,19 @@ export function Reader() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    let initialFeeds = loadFeeds();
+    if (initialFeeds.length === 0 && !isInitialized()) {
+      initialFeeds = DEFAULT_FEEDS.map((d) => ({
+        id: randomId(),
+        url: d.url,
+        title: d.title,
+        addedAt: Date.now(),
+      }));
+      saveFeeds(initialFeeds);
+    }
+    markInitialized();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration after mount
-    setFeeds(loadFeeds());
+    setFeeds(initialFeeds);
     setAIConfig(loadAIConfig());
     setReadSet(loadRead());
     setSummaries(loadSummaries());

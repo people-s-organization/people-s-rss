@@ -6,6 +6,17 @@ const FEEDS_KEY = "prss:feeds";
 const AI_KEY = "prss:ai";
 const READ_KEY = "prss:read";
 const SUMMARIES_KEY = "prss:summaries";
+const INITIALIZED_KEY = "prss:initialized";
+
+export function isInitialized(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(INITIALIZED_KEY) === "1";
+}
+
+export function markInitialized() {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(INITIALIZED_KEY, "1");
+}
 
 export function loadFeeds(): Feed[] {
   if (typeof window === "undefined") return [];
