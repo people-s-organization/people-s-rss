@@ -588,78 +588,94 @@ export function Reader() {
 
       <main className="hidden md:flex flex-1 flex-col overflow-hidden">
         {selectedArticle ? (
-          <article className="flex-1 overflow-y-auto">
-            <header className="px-8 pt-8 pb-4 border-b border-border">
-              <div className="text-xs opacity-60 mb-2 flex items-center gap-2">
-                <span>{selectedArticle.feedTitle}</span>
-                {selectedArticle.author && (
-                  <>
-                    <span>·</span>
-                    <span>{selectedArticle.author}</span>
-                  </>
+          <article
+            key={selectedArticle.id}
+            className="flex-1 overflow-y-auto"
+          >
+            <header className="border-b border-border">
+              <div className="max-w-3xl mx-auto px-10 pt-10 pb-6">
+                <div className="text-xs opacity-60 mb-2 flex items-center gap-2">
+                  <span>{selectedArticle.feedTitle}</span>
+                  {selectedArticle.author && (
+                    <>
+                      <span>·</span>
+                      <span>{selectedArticle.author}</span>
+                    </>
+                  )}
+                  {selectedArticle.publishedAt && (
+                    <>
+                      <span>·</span>
+                      <span>{formatDate(selectedArticle.publishedAt)}</span>
+                    </>
+                  )}
+                </div>
+                <h1 className="text-3xl font-semibold leading-tight tracking-tight">
+                  {selectedArticle.title}
+                </h1>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <a
+                    href={selectedArticle.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm rounded border border-border px-3 py-1 hover:bg-muted"
+                  >
+                    Open original ↗
+                  </a>
+                  <button
+                    onClick={() => handleExtractFull(selectedArticle)}
+                    disabled={
+                      extracting === selectedArticle.id || !selectedArticle.link
+                    }
+                    className="text-sm rounded border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
+                  >
+                    {extracting === selectedArticle.id
+                      ? "Loading…"
+                      : fullContent[selectedArticle.id]
+                        ? "Reload full"
+                        : "📖 Load full article"}
+                  </button>
+                  <button
+                    onClick={() => handleSummarize(selectedArticle)}
+                    disabled={summarizing === selectedArticle.id}
+                    className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
+                  >
+                    {summarizing === selectedArticle.id
+                      ? "Summarizing…"
+                      : summaries[selectedArticle.id]
+                        ? "Re-summarize"
+                        : "✨ AI summarize"}
+                  </button>
+                </div>
+                {summaryError && (
+                  <p className="text-sm text-red-500 mt-2">{summaryError}</p>
                 )}
-                {selectedArticle.publishedAt && (
-                  <>
-                    <span>·</span>
-                    <span>{formatDate(selectedArticle.publishedAt)}</span>
-                  </>
+                {extractError && (
+                  <p className="text-sm text-red-500 mt-2">{extractError}</p>
                 )}
-              </div>
-              <h1 className="text-2xl font-semibold leading-tight tracking-tight">
-                {selectedArticle.title}
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <a
-                  href={selectedArticle.link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-sm rounded border border-border px-3 py-1 hover:bg-muted"
-                >
-                  Open original ↗
-                </a>
-                <button
-                  onClick={() => handleExtractFull(selectedArticle)}
-                  disabled={
-                    extracting === selectedArticle.id || !selectedArticle.link
-                  }
-                  className="text-sm rounded border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
-                >
-                  {extracting === selectedArticle.id
-                    ? "Loading…"
-                    : fullContent[selectedArticle.id]
-                      ? "Reload full"
-                      : "📖 Load full article"}
-                </button>
-                <button
-                  onClick={() => handleSummarize(selectedArticle)}
-                  disabled={summarizing === selectedArticle.id}
-                  className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
-                >
-                  {summarizing === selectedArticle.id
-                    ? "Summarizing…"
-                    : summaries[selectedArticle.id]
-                      ? "Re-summarize"
-                      : "✨ AI summarize"}
-                </button>
-              </div>
-              {summaryError && (
-                <p className="text-sm text-red-500 mt-2">{summaryError}</p>
-              )}
-              {extractError && (
-                <p className="text-sm text-red-500 mt-2">{extractError}</p>
-              )}
-              {summaries[selectedArticle.id] && (
-                <div className="mt-4 rounded border border-border bg-muted/50 p-4">
-                  <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">
-                    Summary
+                {summaries[selectedArticle.id] && (
+                  <div className="mt-4 rounded border border-border bg-muted/50 p-4">
+                    <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">
+                      Summary
+                    </div>
+                    <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                      {summaries[selectedArticle.id]}
+                    </div>
                   </div>
-                  <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                    {summaries[selectedArticle.id]}
+                )}
+              </div>
+            </header>
+            {extracting === selectedArticle.id &&
+              !fullContent[selectedArticle.id] && (
+                <div className="max-w-3xl mx-auto px-10 pt-4">
+                  <div className="flex items-center gap-2 text-sm rounded-md border border-border bg-muted/50 px-3 py-2">
+                    <Spinner />
+                    <span className="opacity-80">
+                      Loading full article from source…
+                    </span>
                   </div>
                 </div>
               )}
-            </header>
-            <div className="px-8 py-6 max-w-2xl prose-content">
+            <div className="max-w-3xl mx-auto px-10 py-8 prose-content">
               {fullContent[selectedArticle.id] ? (
                 <div
                   dangerouslySetInnerHTML={{
@@ -720,6 +736,15 @@ export function Reader() {
         />
       )}
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      aria-label="loading"
+      className="inline-block w-4 h-4 rounded-full border-2 border-current border-r-transparent animate-spin opacity-70"
+    />
   );
 }
 
@@ -965,6 +990,12 @@ function MobileReader({
         )}
         {extractError && (
           <p className="text-sm text-red-500 mb-3">{extractError}</p>
+        )}
+        {extracting && !fullHtml && (
+          <div className="mb-3 flex items-center gap-2 text-sm rounded-md border border-border bg-muted/50 px-3 py-2">
+            <Spinner />
+            <span className="opacity-80">Loading full article…</span>
+          </div>
         )}
         {summary && (
           <div className="mb-4 rounded border border-border bg-muted/50 p-3">
