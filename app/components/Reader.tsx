@@ -340,18 +340,15 @@ export function Reader() {
     await Promise.all(feeds.map((f) => refreshFeed(f)));
   }
 
-  async function loadOlder() {
-    const totalAvailable = fullVisibleArticles.length;
-    if (displayLimit < totalAvailable) {
-      setDisplayLimit((n) => Math.min(n + 50, totalAvailable));
-      return;
-    }
-    await refreshAllFeeds();
+  const hasMoreCached = displayLimit < fullVisibleArticles.length;
+
+  function loadOlder() {
+    setDisplayLimit((n) => Math.min(n + 50, fullVisibleArticles.length));
   }
 
   const pull = usePullGestures(articleListRef, {
     onPullDown: refreshAllFeeds,
-    onPullUp: loadOlder,
+    onPullUp: hasMoreCached ? loadOlder : undefined,
   });
 
   const allCategoryNames = useMemo(() => {
@@ -875,20 +872,19 @@ export function Reader() {
             busy={pull.busy}
             label={
               pull.busy
-                ? displayLimit < fullVisibleArticles.length
-                  ? "Loading…"
-                  : "Refreshing…"
+                ? "Loading…"
                 : pull.releasing
-                  ? displayLimit < fullVisibleArticles.length
-                    ? "Release to load older"
-                    : "Release to refresh"
-                  : displayLimit < fullVisibleArticles.length
-                    ? "Pull up to load older"
-                    : "Pull up to refresh"
+                  ? "Release to load older"
+                  : "Pull up to load older"
             }
             arrow="↑"
             position="bottom"
           />
+        )}
+        {!hasMoreCached && visibleArticles.length > 0 && (
+          <div className="text-center text-[10px] opacity-40 py-2 border-t border-border">
+            — end of cached articles —
+          </div>
         )}
       </section>
 
@@ -932,13 +928,17 @@ export function Reader() {
                     disabled={
                       extracting === selectedArticle.id || !selectedArticle.link
                     }
-                    className="text-sm rounded border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
+                    className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 hover:bg-muted disabled:opacity-30"
+                    title={
+                      extracting === selectedArticle.id
+                        ? "Loading full article…"
+                        : fullContent[selectedArticle.id]
+                          ? "Re-fetch full article from source"
+                          : "Fetch full article from source"
+                    }
+                    aria-label="Load full article"
                   >
-                    {extracting === selectedArticle.id
-                      ? "Loading…"
-                      : fullContent[selectedArticle.id]
-                        ? "Reload full"
-                        : "📖 Load full article"}
+                    {extracting === selectedArticle.id ? "…" : "📖"}
                   </button>
                   <button
                     onClick={() => handleSummarize(selectedArticle)}
@@ -1853,7 +1853,7 @@ function MobileReader({
         <button
           onClick={onExtract}
           disabled={extracting || !article.link}
-          className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50"
+          className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 disabled:opacity-30"
           title={fullHtml ? "Reload full article" : "Load full article"}
         >
           {extracting ? "…" : "📖"}
