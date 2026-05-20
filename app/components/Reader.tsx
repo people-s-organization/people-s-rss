@@ -275,6 +275,9 @@ export function Reader() {
   const autoRefreshedRef = useRef<Set<string>>(new Set());
   const articleListRef = useRef<HTMLOListElement>(null);
   const [displayLimit, setDisplayLimit] = useState(50);
+  const [pagination, setPagination] = useState<
+    Record<string, { page: number; exhausted: boolean }>
+  >({});
   useEffect(() => {
     if (!hydrated) return;
     for (const feed of feeds) {
@@ -340,15 +343,114 @@ export function Reader() {
     await Promise.all(feeds.map((f) => refreshFeed(f)));
   }
 
-  const hasMoreCached = displayLimit < fullVisibleArticles.length;
+  function feedsInScope(): Feed[] {
+    if (
+      typeof selectedFeedId === "string" &&
+      selectedFeedId.startsWith("cat:")
+    ) {
+      const cat = selectedFeedId.slice(4);
+      return feeds.filter((f) => (f.category ?? "") === cat);
+    }
+    if (selectedFeedId !== "all") {
+      return feeds.filter((f) => f.id === selectedFeedId);
+    }
+    return feeds;
+  }
 
-  function loadOlder() {
-    setDisplayLimit((n) => Math.min(n + 50, fullVisibleArticles.length));
+  async function tryFetchOlderPage(feed: Feed): Promise<number> {
+    const p = pagination[feed.id] ?? { page: 1, exhausted: false };
+    if (p.exhausted) return 0;
+    const nextPage = p.page + 1;
+    const sep = feed.url.includes("?") ? "&" : "?";
+    const pagedUrl = `${feed.url}${sep}paged=${nextPage}`;
+    try {
+      const res = await fetch(
+        `/api/feed?url=${encodeURIComponent(pagedUrl)}`,
+      );
+      const data = (await res.json()) as { feed?: ParsedFeed; error?: string };
+      if (!res.ok || !data.feed) {
+        setPagination((prev) => ({
+          ...prev,
+          [feed.id]: { page: p.page, exhausted: true },
+        }));
+        return 0;
+      }
+      const fresh: Article[] = data.feed.items.map((item) => ({
+        id: stableId(feed.id, item.guid || item.link || item.title),
+        feedId: feed.id,
+        feedTitle: feed.title,
+        title: item.title,
+        link: item.link,
+        author: item.author,
+        publishedAt: item.publishedAt,
+        contentHtml: item.contentHtml,
+        contentText: item.contentText,
+        hasFullContent: item.hasFullContent,
+      }));
+      let addedCount = 0;
+      setFeedStates((prev) => {
+        const previous = prev[feed.id];
+        const previousArticles =
+          previous?.status === "ready" ? previous.articles : [];
+        const existingIds = new Set(previousArticles.map((a) => a.id));
+        addedCount = fresh.filter((a) => !existingIds.has(a.id)).length;
+        if (addedCount === 0) return prev;
+        const articles = mergeArticleLists(previousArticles, fresh);
+        const fetchedAt = Date.now();
+        const cache = loadFeedCache();
+        cache[feed.id] = { articles, fetchedAt };
+        saveFeedCache(cache);
+        return {
+          ...prev,
+          [feed.id]: { status: "ready", articles, fetchedAt },
+        };
+      });
+      if (addedCount === 0) {
+        setPagination((prev) => ({
+          ...prev,
+          [feed.id]: { page: p.page, exhausted: true },
+        }));
+      } else {
+        setPagination((prev) => ({
+          ...prev,
+          [feed.id]: { page: nextPage, exhausted: false },
+        }));
+      }
+      return addedCount;
+    } catch {
+      setPagination((prev) => ({
+        ...prev,
+        [feed.id]: { page: p.page, exhausted: true },
+      }));
+      return 0;
+    }
+  }
+
+  const hasMoreCached = displayLimit < fullVisibleArticles.length;
+  const scopeFeedsRef = useRef<Feed[]>([]);
+  scopeFeedsRef.current = feedsInScope();
+  const allExhausted = scopeFeedsRef.current.every(
+    (f) => pagination[f.id]?.exhausted,
+  );
+
+  async function loadOlder() {
+    if (hasMoreCached) {
+      setDisplayLimit((n) => Math.min(n + 50, fullVisibleArticles.length));
+      return;
+    }
+    // Try pulling older items from the source RSS via ?paged= pagination
+    const results = await Promise.all(
+      scopeFeedsRef.current.map((f) => tryFetchOlderPage(f)),
+    );
+    const added = results.reduce((a, b) => a + b, 0);
+    if (added > 0) {
+      setDisplayLimit((n) => n + Math.min(50, added));
+    }
   }
 
   const pull = usePullGestures(articleListRef, {
     onPullDown: refreshAllFeeds,
-    onPullUp: hasMoreCached ? loadOlder : undefined,
+    onPullUp: hasMoreCached || !allExhausted ? loadOlder : undefined,
   });
 
   const allCategoryNames = useMemo(() => {
@@ -872,18 +974,24 @@ export function Reader() {
             busy={pull.busy}
             label={
               pull.busy
-                ? "Loading…"
+                ? hasMoreCached
+                  ? "Loading…"
+                  : "Fetching older from source…"
                 : pull.releasing
-                  ? "Release to load older"
-                  : "Pull up to load older"
+                  ? hasMoreCached
+                    ? "Release to load older"
+                    : "Release to fetch older from source"
+                  : hasMoreCached
+                    ? "Pull up to load older"
+                    : "Pull up to fetch older from source"
             }
             arrow="↑"
             position="bottom"
           />
         )}
-        {!hasMoreCached && visibleArticles.length > 0 && (
+        {!hasMoreCached && allExhausted && visibleArticles.length > 0 && (
           <div className="text-center text-[10px] opacity-40 py-2 border-t border-border">
-            — end of cached articles —
+            — no older articles available —
           </div>
         )}
       </section>

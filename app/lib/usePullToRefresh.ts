@@ -16,6 +16,7 @@ const MAX_PULL = 110;
 const TOUCH_RESISTANCE = 0.5;
 const WHEEL_RESISTANCE = 0.6;
 const WHEEL_IDLE_MS = 220;
+const WHEEL_RELEASE_MS = 250;
 
 export type PullHandlers = {
   onPullDown?: () => Promise<void> | void;
@@ -39,6 +40,8 @@ export function usePullGestures(
   const busyRef = useRef(false);
   const handlersRef = useRef(handlers);
   const wheelTimerRef = useRef<number | null>(null);
+  const lastWheelTimeRef = useRef(0);
+  const canPullRef = useRef(false);
 
   useEffect(() => {
     handlersRef.current = handlers;
@@ -166,6 +169,16 @@ export function usePullGestures(
 
     // ---- Wheel ----
     function wheel(e: WheelEvent) {
+      const now = Date.now();
+      const gap = now - lastWheelTimeRef.current;
+      lastWheelTimeRef.current = now;
+      // A new gesture begins only after the wheel has been quiet long
+      // enough — this rejects momentum carried over from scrolling to the
+      // edge, which would otherwise immediately trigger a pull.
+      if (gap > WHEEL_RELEASE_MS) {
+        canPullRef.current = true;
+      }
+
       if (busyRef.current) return;
       const node = ref.current;
       if (!node) return;
@@ -177,6 +190,7 @@ export function usePullGestures(
         e.deltaY > 0 && atBottom && !!handlersRef.current.onPullUp;
       if (!wantDown && !wantUp) {
         // outside of edge — clear any pending gesture
+        canPullRef.current = false;
         if (distanceRef.current > 0) {
           if (wheelTimerRef.current) {
             window.clearTimeout(wheelTimerRef.current);
@@ -184,6 +198,11 @@ export function usePullGestures(
           }
           reset();
         }
+        return;
+      }
+      if (!canPullRef.current) {
+        // Still inside the inertia window after reaching the edge —
+        // swallow the events but don't accumulate any pull distance.
         return;
       }
       e.preventDefault();
@@ -211,6 +230,7 @@ export function usePullGestures(
         } else {
           reset();
         }
+        canPullRef.current = false;
       }, WHEEL_IDLE_MS);
     }
 
