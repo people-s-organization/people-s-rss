@@ -1,6 +1,6 @@
 "use client";
 
-import type { AIConfig, Feed } from "./types";
+import type { AIConfig, Article, Feed } from "./types";
 
 const FEEDS_KEY = "prss:feeds";
 const AI_KEY = "prss:ai";
@@ -8,6 +8,49 @@ const READ_KEY = "prss:read";
 const SUMMARIES_KEY = "prss:summaries";
 const INITIALIZED_KEY = "prss:initialized";
 const FILTER_KEY = "prss:filterMode";
+const FEED_CACHE_KEY = "prss:feedCache";
+
+type FeedCacheEntry = {
+  articles: Article[];
+  fetchedAt: number;
+};
+
+export function loadFeedCache(): Record<string, FeedCacheEntry> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(FEED_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, FeedCacheEntry>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveFeedCache(cache: Record<string, FeedCacheEntry>) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(FEED_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // QuotaExceeded — drop oldest entries until fits
+    const entries = Object.entries(cache).sort(
+      (a, b) => a[1].fetchedAt - b[1].fetchedAt,
+    );
+    while (entries.length > 0) {
+      entries.shift();
+      try {
+        window.localStorage.setItem(
+          FEED_CACHE_KEY,
+          JSON.stringify(Object.fromEntries(entries)),
+        );
+        return;
+      } catch {}
+    }
+  }
+}
 
 export function loadFilterMode(): "unread" | "all" {
   if (typeof window === "undefined") return "unread";

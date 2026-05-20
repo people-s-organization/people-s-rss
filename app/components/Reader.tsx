@@ -6,6 +6,7 @@ import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
 import {
   isInitialized,
   loadAIConfig,
+  loadFeedCache,
   loadFeeds,
   loadFilterMode,
   loadRead,
@@ -13,6 +14,7 @@ import {
   markInitialized,
   randomId,
   saveAIConfig,
+  saveFeedCache,
   saveFeeds,
   saveFilterMode,
   saveRead,
@@ -91,8 +93,23 @@ export function Reader() {
       saveFeeds(initialFeeds);
     }
     markInitialized();
+    // Hydrate feedStates from localStorage cache so the first paint shows
+    // articles immediately without a network roundtrip.
+    const cache = loadFeedCache();
+    const hydratedStates: Record<string, FeedState> = {};
+    for (const f of initialFeeds) {
+      const entry = cache[f.id];
+      if (entry && Array.isArray(entry.articles)) {
+        hydratedStates[f.id] = {
+          status: "ready",
+          articles: entry.articles,
+          fetchedAt: entry.fetchedAt,
+        };
+      }
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration after mount
     setFeeds(initialFeeds);
+    setFeedStates(hydratedStates);
     setAIConfig(loadAIConfig());
     setReadSet(loadRead());
     setSummaries(loadSummaries());
@@ -100,10 +117,20 @@ export function Reader() {
     setHydrated(true);
   }, []);
 
-  async function refreshFeed(feed: Feed) {
-    setFeedStates((prev) => ({ ...prev, [feed.id]: { status: "loading" } }));
+  async function refreshFeed(feed: Feed, options?: { silent?: boolean }) {
+    const silent = options?.silent ?? false;
+    setFeedStates((prev) => {
+      const existing = prev[feed.id];
+      if (silent && existing?.status === "ready") return prev;
+      return { ...prev, [feed.id]: { status: "loading" } };
+    });
     try {
-      const res = await fetch(`/api/feed?url=${encodeURIComponent(feed.url)}`);
+      const url = `/api/feed?url=${encodeURIComponent(feed.url)}${
+        silent ? "" : `&_t=${Date.now()}`
+      }`;
+      const res = await fetch(url, {
+        cache: silent ? "default" : "no-store",
+      });
       const data = (await res.json()) as { feed?: ParsedFeed; error?: string };
       if (!res.ok || !data.feed) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
@@ -120,16 +147,28 @@ export function Reader() {
         contentText: item.contentText,
         hasFullContent: item.hasFullContent,
       }));
+      const fetchedAt = Date.now();
       setFeedStates((prev) => ({
         ...prev,
-        [feed.id]: { status: "ready", articles, fetchedAt: Date.now() },
+        [feed.id]: { status: "ready", articles, fetchedAt },
       }));
+      // Persist to localStorage cache for next reload
+      const cache = loadFeedCache();
+      cache[feed.id] = { articles, fetchedAt };
+      saveFeedCache(cache);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load";
-      setFeedStates((prev) => ({
-        ...prev,
-        [feed.id]: { status: "error", error: message },
-      }));
+      setFeedStates((prev) => {
+        const existing = prev[feed.id];
+        if (silent && existing?.status === "ready") {
+          // Keep showing cached articles on background refresh failure
+          return prev;
+        }
+        return {
+          ...prev,
+          [feed.id]: { status: "error", error: message },
+        };
+      });
     }
   }
 
@@ -226,15 +265,15 @@ export function Reader() {
     };
   }, [feeds, readSet, aiConfig]);
 
+  const autoRefreshedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!hydrated) return;
     for (const feed of feeds) {
-      if (!feedStates[feed.id]) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- triggers async fetch that sets state
-        void refreshFeed(feed);
-      }
+      if (autoRefreshedRef.current.has(feed.id)) continue;
+      autoRefreshedRef.current.add(feed.id);
+      void refreshFeed(feed, { silent: true });
     }
-  }, [feeds, hydrated, feedStates]);
+  }, [feeds, hydrated]);
 
   const allArticles = useMemo(() => {
     const list: Article[] = [];
@@ -799,14 +838,7 @@ export function Reader() {
                   <p className="text-sm text-red-500 mt-2">{extractError}</p>
                 )}
                 {summaries[selectedArticle.id] && (
-                  <div className="mt-4 rounded border border-border bg-muted/50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">
-                      Summary
-                    </div>
-                    <div className="text-sm whitespace-pre-wrap leading-relaxed">
-                      {summaries[selectedArticle.id]}
-                    </div>
-                  </div>
+                  <SummaryCard text={summaries[selectedArticle.id]!} />
                 )}
               </div>
             </header>
@@ -1117,6 +1149,137 @@ function MobileFeedPicker({
           </p>
         )}
       </nav>
+    </div>
+  );
+}
+
+type SummaryNode = {
+  kind: "ul" | "ol" | "p";
+  items: { content: string; lvl?: number }[];
+};
+
+function parseSummary(raw: string): SummaryNode[] {
+  const lines = raw.replace(/\r\n/g, "\n").split("\n");
+  const blocks: SummaryNode[] = [];
+  let current: SummaryNode | null = null;
+  for (const lineRaw of lines) {
+    const line = lineRaw.trimEnd();
+    if (!line.trim()) {
+      current = null;
+      continue;
+    }
+    const ulMatch = line.match(/^(\s*)[-*•·]\s+(.*)$/);
+    const olMatch = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
+    if (ulMatch) {
+      const lvl = Math.min(Math.floor(ulMatch[1].length / 2), 3);
+      if (!current || current.kind !== "ul") {
+        current = { kind: "ul", items: [] };
+        blocks.push(current);
+      }
+      current.items.push({ content: ulMatch[2], lvl });
+    } else if (olMatch) {
+      const lvl = Math.min(Math.floor(olMatch[1].length / 2), 3);
+      if (!current || current.kind !== "ol") {
+        current = { kind: "ol", items: [] };
+        blocks.push(current);
+      }
+      current.items.push({ content: olMatch[3], lvl });
+    } else {
+      if (!current || current.kind !== "p") {
+        current = { kind: "p", items: [] };
+        blocks.push(current);
+      }
+      current.items.push({ content: line });
+    }
+  }
+  return blocks;
+}
+
+function renderInline(text: string): React.ReactNode {
+  // **bold** and `code` only — keep it minimal
+  const parts: React.ReactNode[] = [];
+  const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = regex.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const token = m[0];
+    if (token.startsWith("**")) {
+      parts.push(
+        <strong key={i++} className="font-semibold">
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else if (token.startsWith("`")) {
+      parts.push(
+        <code
+          key={i++}
+          className="bg-foreground/10 rounded px-1 py-0.5 text-[0.85em] font-mono"
+        >
+          {token.slice(1, -1)}
+        </code>,
+      );
+    }
+    last = m.index + token.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length === 0 ? text : parts;
+}
+
+function SummaryCard({ text }: { text: string }) {
+  const blocks = useMemo(() => parseSummary(text), [text]);
+  return (
+    <div className="mt-4 relative overflow-hidden rounded-xl border border-accent/30 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent">
+      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,var(--accent),transparent_40%)] opacity-10" />
+      <div className="relative px-5 py-4">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent/15 text-accent">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+              <path d="M12 2l1.84 5.66h5.95l-4.81 3.5 1.84 5.66L12 13.31 7.18 16.82 9.02 11.16 4.21 7.66h5.95L12 2z"/>
+            </svg>
+          </span>
+          <div className="text-xs font-semibold uppercase tracking-wider text-accent">
+            AI Summary
+          </div>
+        </div>
+        <div className="text-sm leading-relaxed space-y-2.5">
+          {blocks.map((block, bi) => {
+            if (block.kind === "p") {
+              return block.items.map((it, ii) => (
+                <p key={`${bi}-${ii}`} className="m-0">
+                  {renderInline(it.content)}
+                </p>
+              ));
+            }
+            const ListTag = block.kind === "ol" ? "ol" : "ul";
+            return (
+              <ListTag
+                key={bi}
+                className={`m-0 pl-0 space-y-1.5 ${
+                  block.kind === "ol" ? "list-decimal" : ""
+                }`}
+              >
+                {block.items.map((it, ii) => (
+                  <li
+                    key={ii}
+                    className="flex items-start gap-2"
+                    style={{ paddingLeft: `${(it.lvl ?? 0) * 1}rem` }}
+                  >
+                    {block.kind === "ul" && (
+                      <span
+                        className="mt-2 inline-block w-1 h-1 rounded-full bg-accent/80 shrink-0"
+                        aria-hidden
+                      />
+                    )}
+                    <span className="flex-1">{renderInline(it.content)}</span>
+                  </li>
+                ))}
+              </ListTag>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -1574,13 +1737,8 @@ function MobileReader({
           </div>
         )}
         {summary && (
-          <div className="mb-4 rounded border border-border bg-muted/50 p-3">
-            <div className="text-xs font-semibold uppercase tracking-wide opacity-70 mb-1">
-              Summary
-            </div>
-            <div className="text-sm whitespace-pre-wrap leading-relaxed">
-              {summary}
-            </div>
+          <div className="mb-4">
+            <SummaryCard text={summary} />
           </div>
         )}
         <div className="prose-content">
