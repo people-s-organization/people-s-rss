@@ -244,6 +244,16 @@ export function Reader() {
     [visibleArticles, selectedArticleId],
   );
 
+  useEffect(() => {
+    if (!selectedArticle) return;
+    if (!selectedArticle.link) return;
+    if (fullContent[selectedArticle.id]) return;
+    if (extracting === selectedArticle.id) return;
+    void handleExtractFull(selectedArticle);
+    // handleExtractFull is stable enough; only react to article change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedArticle?.id]);
+
   function selectArticle(id: string) {
     setSelectedArticleId(id);
     if (!readSet.has(id)) {

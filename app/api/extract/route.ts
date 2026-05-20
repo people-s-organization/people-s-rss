@@ -60,8 +60,9 @@ export async function GET(request: Request) {
       );
     }
 
-    const cleanHtml = sanitizeHtml(article.content);
-    const text = stripHtml(article.content);
+    const absHtml = resolveUrls(article.content, target.toString());
+    const cleanHtml = sanitizeHtml(absHtml);
+    const text = stripHtml(absHtml);
     return NextResponse.json(
       {
         title: article.title ?? undefined,
@@ -84,4 +85,43 @@ export async function GET(request: Request) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function resolveUrls(html: string, baseUrl: string): string {
+  const wrap = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
+  const doc = wrap.window.document;
+  doc.querySelectorAll("[src]").forEach((el) => {
+    const v = el.getAttribute("src");
+    if (!v) return;
+    try {
+      el.setAttribute("src", new URL(v, baseUrl).href);
+    } catch {}
+  });
+  doc.querySelectorAll("[href]").forEach((el) => {
+    const v = el.getAttribute("href");
+    if (!v) return;
+    try {
+      el.setAttribute("href", new URL(v, baseUrl).href);
+    } catch {}
+  });
+  doc.querySelectorAll("[srcset]").forEach((el) => {
+    const v = el.getAttribute("srcset");
+    if (!v) return;
+    const rewritten = v
+      .split(",")
+      .map((part) => {
+        const trimmed = part.trim();
+        if (!trimmed) return "";
+        const [u, ...rest] = trimmed.split(/\s+/);
+        try {
+          return [new URL(u, baseUrl).href, ...rest].join(" ");
+        } catch {
+          return trimmed;
+        }
+      })
+      .filter(Boolean)
+      .join(", ");
+    el.setAttribute("srcset", rewritten);
+  });
+  return doc.body.innerHTML;
 }
