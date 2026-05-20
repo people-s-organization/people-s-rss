@@ -71,6 +71,7 @@ export function Reader() {
     saveFilterMode(m);
   };
   const [openFeedMenuId, setOpenFeedMenuId] = useState<string | null>(null);
+  const [mobileFeedPickerOpen, setMobileFeedPickerOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -588,14 +589,22 @@ export function Reader() {
           >
             ⚙
           </button>
-          <h2 className="text-sm font-semibold truncate flex-1 min-w-0">
-            {selectedFeedId === "all"
-              ? "All"
-              : typeof selectedFeedId === "string" &&
-                  selectedFeedId.startsWith("cat:")
-                ? selectedFeedId.slice(4) || "Uncategorized"
-                : feeds.find((f) => f.id === selectedFeedId)?.title ?? "Articles"}
-          </h2>
+          <button
+            onClick={() => setMobileFeedPickerOpen(true)}
+            className="text-sm font-semibold truncate flex-1 min-w-0 flex items-center gap-1 md:cursor-default md:hover:bg-transparent rounded px-1 hover:bg-muted md:pointer-events-none"
+            aria-label="Switch feed"
+          >
+            <span className="truncate">
+              {selectedFeedId === "all"
+                ? "All"
+                : typeof selectedFeedId === "string" &&
+                    selectedFeedId.startsWith("cat:")
+                  ? selectedFeedId.slice(4) || "Uncategorized"
+                  : feeds.find((f) => f.id === selectedFeedId)?.title ??
+                    "Articles"}
+            </span>
+            <span className="md:hidden text-[10px] opacity-60 shrink-0">▾</span>
+          </button>
           <div className="flex items-center rounded border border-border overflow-hidden shrink-0">
             <button
               onClick={() => setFilterMode("unread")}
@@ -835,6 +844,26 @@ export function Reader() {
         onSaveAI={handleSaveAI}
       />
 
+      {mobileFeedPickerOpen && (
+        <MobileFeedPicker
+          feeds={feeds}
+          feedGroups={feedGroups}
+          feedStates={feedStates}
+          selectedFeedId={selectedFeedId}
+          unreadCounts={unreadCounts}
+          onSelect={(id) => {
+            setSelectedFeedId(id);
+            setSelectedArticleId(null);
+            setMobileFeedPickerOpen(false);
+          }}
+          onClose={() => setMobileFeedPickerOpen(false)}
+          refreshingAll={refreshingAll}
+          onRefreshAll={() => {
+            for (const f of feeds) void refreshFeed(f);
+          }}
+        />
+      )}
+
       {selectedArticle && (
         <MobileReader
           article={selectedArticle}
@@ -963,6 +992,122 @@ function ArticleBody({
           </div>
         </aside>
       )}
+    </div>
+  );
+}
+
+function MobileFeedPicker({
+  feeds,
+  feedGroups,
+  feedStates,
+  selectedFeedId,
+  unreadCounts,
+  onSelect,
+  onClose,
+  refreshingAll,
+  onRefreshAll,
+}: {
+  feeds: Feed[];
+  feedGroups: { key: string; feeds: Feed[] }[];
+  feedStates: Record<string, FeedState>;
+  selectedFeedId: string | "all";
+  unreadCounts: Record<string, number>;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+  refreshingAll: boolean;
+  onRefreshAll: () => void;
+}) {
+  return (
+    <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
+        <button
+          onClick={onClose}
+          className="text-sm rounded px-2 py-1 hover:bg-muted"
+          aria-label="Back"
+        >
+          ← Back
+        </button>
+        <h2 className="text-sm font-semibold flex-1">Feeds</h2>
+        <button
+          onClick={onRefreshAll}
+          disabled={refreshingAll || feeds.length === 0}
+          className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted"
+        >
+          {refreshingAll ? "…" : "Refresh"}
+        </button>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-2 py-3">
+        <button
+          onClick={() => onSelect("all")}
+          className={`w-full text-left rounded px-3 py-2 text-sm flex items-center justify-between ${
+            selectedFeedId === "all"
+              ? "bg-muted font-medium"
+              : "hover:bg-muted/60"
+          }`}
+        >
+          <span>All articles</span>
+          {unreadCounts.__all > 0 && (
+            <span className="text-xs opacity-70">{unreadCounts.__all}</span>
+          )}
+        </button>
+        <div className="mt-3 space-y-3">
+          {feedGroups.map((group) => {
+            const label = group.key === "" ? "Uncategorized" : group.key;
+            const catKey = `cat:${group.key}`;
+            return (
+              <div key={group.key || "__uncat__"}>
+                {(group.key !== "" || feedGroups.length > 1) && (
+                  <button
+                    onClick={() => onSelect(catKey)}
+                    className={`w-full text-left px-3 py-1 text-[11px] uppercase tracking-wider flex items-center justify-between ${
+                      selectedFeedId === catKey
+                        ? "text-accent font-semibold"
+                        : "opacity-60 hover:opacity-100"
+                    }`}
+                  >
+                    <span>{label}</span>
+                    {unreadCounts[catKey] ? (
+                      <span className="text-[10px]">
+                        {unreadCounts[catKey]}
+                      </span>
+                    ) : null}
+                  </button>
+                )}
+                <div className="space-y-0.5 mt-1">
+                  {group.feeds.map((f) => {
+                    const s = feedStates[f.id];
+                    return (
+                      <button
+                        key={f.id}
+                        onClick={() => onSelect(f.id)}
+                        className={`w-full text-left rounded px-3 py-2 text-sm flex items-center justify-between gap-2 ${
+                          selectedFeedId === f.id
+                            ? "bg-muted font-medium"
+                            : "hover:bg-muted/60"
+                        }`}
+                      >
+                        <span className="truncate">{f.title}</span>
+                        <span className="text-xs opacity-70 shrink-0">
+                          {s?.status === "loading"
+                            ? "…"
+                            : s?.status === "error"
+                              ? "!"
+                              : unreadCounts[f.id] || ""}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {feeds.length === 0 && (
+          <p className="text-xs opacity-60 px-3 mt-4">
+            No feeds yet. Tap ⚙ to add one.
+          </p>
+        )}
+      </nav>
     </div>
   );
 }
