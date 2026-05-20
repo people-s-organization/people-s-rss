@@ -85,6 +85,7 @@ export function Reader() {
         publishedAt: item.publishedAt,
         contentHtml: item.contentHtml,
         contentText: item.contentText,
+        hasFullContent: item.hasFullContent,
       }));
       setFeedStates((prev) => ({
         ...prev,
@@ -251,8 +252,12 @@ export function Reader() {
     if (!selectedArticle.link) return;
     if (fullContent[selectedArticle.id]) return;
     if (extracting === selectedArticle.id) return;
+    if (selectedArticle.hasFullContent) {
+      // Feed item already shipped a content:encoded / atom <content> body.
+      return;
+    }
     if ((selectedArticle.contentText?.length ?? 0) >= FEED_FULL_THRESHOLD) {
-      // Feed already contains full content; skip auto-extract.
+      // Fallback: long enough text in description/summary — treat as full.
       return;
     }
     void handleExtractFull(selectedArticle);

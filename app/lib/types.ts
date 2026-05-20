@@ -16,6 +16,7 @@ export type Article = {
   publishedAt?: number;
   contentHtml?: string;
   contentText?: string;
+  hasFullContent?: boolean;
   summary?: string;
 };
 
@@ -40,5 +41,6 @@ export type ParsedItem = {
   publishedAt?: number;
   contentHtml?: string;
   contentText?: string;
+  hasFullContent?: boolean;
   guid?: string;
 };

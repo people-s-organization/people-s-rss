@@ -112,7 +112,10 @@ body {
 .prose-content img,
 .prose-content video {
   max-width: 100%;
+  max-height: 70vh;
+  width: auto;
   height: auto;
+  object-fit: contain;
   border-radius: 6px;
   display: block;
   margin: 1.25rem auto;

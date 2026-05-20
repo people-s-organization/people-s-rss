@@ -160,14 +160,22 @@ function parseRssItem(item: Record<string, unknown>): ParsedItem {
   const publishedAt =
     parseDate(pickText(item.pubDate)) ??
     parseDate(pickText(item["dc:date"]));
-  const rawHtml =
-    pickText(item["content:encoded"]) ??
-    pickText(item.description) ??
-    undefined;
+  const encoded = pickText(item["content:encoded"]);
+  const rawHtml = encoded ?? pickText(item.description) ?? undefined;
   const contentHtml = rawHtml ? sanitizeHtml(rawHtml) : undefined;
   const contentText = rawHtml ? stripHtml(rawHtml) : undefined;
+  const hasFullContent = Boolean(encoded);
   const guid = pickText(item.guid);
-  return { title, link, author, publishedAt, contentHtml, contentText, guid };
+  return {
+    title,
+    link,
+    author,
+    publishedAt,
+    contentHtml,
+    contentText,
+    hasFullContent,
+    guid,
+  };
 }
 
 function parseAtomFeed(feed: Record<string, unknown>): ParsedFeed {
@@ -188,14 +196,22 @@ function parseAtomEntry(entry: Record<string, unknown>): ParsedItem {
   const publishedAt =
     parseDate(pickText(entry.published)) ??
     parseDate(pickText(entry.updated));
-  const rawHtml =
-    pickText(entry.content) ??
-    pickText(entry.summary) ??
-    undefined;
+  const content = pickText(entry.content);
+  const rawHtml = content ?? pickText(entry.summary) ?? undefined;
   const contentHtml = rawHtml ? sanitizeHtml(rawHtml) : undefined;
   const contentText = rawHtml ? stripHtml(rawHtml) : undefined;
+  const hasFullContent = Boolean(content);
   const guid = pickText(entry.id);
-  return { title, link, author, publishedAt, contentHtml, contentText, guid };
+  return {
+    title,
+    link,
+    author,
+    publishedAt,
+    contentHtml,
+    contentText,
+    hasFullContent,
+    guid,
+  };
 }
 
 export { stripHtml };
