@@ -57,6 +57,8 @@ export function Reader() {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
     new Set(),
   );
+  const [filterMode, setFilterMode] = useState<"unread" | "all">("unread");
+  const [openFeedMenuId, setOpenFeedMenuId] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -217,16 +219,31 @@ export function Reader() {
   }, [feeds, feedStates]);
 
   const visibleArticles = useMemo(() => {
-    if (selectedFeedId === "all") return allArticles;
+    let list = allArticles;
     if (typeof selectedFeedId === "string" && selectedFeedId.startsWith("cat:")) {
       const cat = selectedFeedId.slice(4);
       const feedIds = new Set(
         feeds.filter((f) => (f.category ?? "") === cat).map((f) => f.id),
       );
-      return allArticles.filter((a) => feedIds.has(a.feedId));
+      list = list.filter((a) => feedIds.has(a.feedId));
+    } else if (selectedFeedId !== "all") {
+      list = list.filter((a) => a.feedId === selectedFeedId);
     }
-    return allArticles.filter((a) => a.feedId === selectedFeedId);
-  }, [allArticles, selectedFeedId, feeds]);
+    if (filterMode === "unread") {
+      list = list.filter(
+        (a) => !readSet.has(a.id) || a.id === selectedArticleId,
+      );
+    }
+    return list;
+  }, [allArticles, selectedFeedId, feeds, filterMode, readSet, selectedArticleId]);
+
+  const allCategoryNames = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of feeds) {
+      if (f.category) set.add(f.category);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [feeds]);
 
   const feedGroups = useMemo(() => {
     const byCat = new Map<string, Feed[]>();
@@ -512,6 +529,13 @@ export function Reader() {
                   setSelectedFeedId(id);
                   setSelectedArticleId(null);
                 }}
+                allCategories={allCategoryNames}
+                openMenuFeedId={openFeedMenuId}
+                onOpenMenu={setOpenFeedMenuId}
+                onCloseMenu={() => setOpenFeedMenuId(null)}
+                onSetCategory={handleSetCategory}
+                onRenameFeed={handleRenameFeed}
+                onRemoveFeed={handleRemoveFeed}
               />
             ))}
           </div>
@@ -534,7 +558,7 @@ export function Reader() {
               ⚙
             </button>
           </div>
-          <h2 className="text-sm font-semibold truncate">
+          <h2 className="text-sm font-semibold truncate flex-1">
             {selectedFeedId === "all"
               ? "All articles"
               : typeof selectedFeedId === "string" &&
@@ -542,12 +566,35 @@ export function Reader() {
                 ? selectedFeedId.slice(4) || "Uncategorized"
                 : feeds.find((f) => f.id === selectedFeedId)?.title ?? "Articles"}
           </h2>
+          <div className="flex items-center rounded border border-border overflow-hidden shrink-0">
+            <button
+              onClick={() => setFilterMode("unread")}
+              className={`text-xs px-2 py-1 ${
+                filterMode === "unread"
+                  ? "bg-foreground text-background"
+                  : "hover:bg-muted"
+              }`}
+            >
+              Unread
+            </button>
+            <button
+              onClick={() => setFilterMode("all")}
+              className={`text-xs px-2 py-1 ${
+                filterMode === "all"
+                  ? "bg-foreground text-background"
+                  : "hover:bg-muted"
+              }`}
+            >
+              All
+            </button>
+          </div>
           <button
             onClick={markAllRead}
             disabled={visibleArticles.length === 0}
-            className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted"
+            className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted shrink-0"
+            title="Mark all visible as read"
           >
-            Mark all read
+            ✓ all
           </button>
         </div>
         <ol className="flex-1 overflow-y-auto divide-y divide-border">
@@ -869,6 +916,13 @@ function FeedGroup({
   selectedFeedId,
   unreadCounts,
   onSelect,
+  allCategories,
+  openMenuFeedId,
+  onOpenMenu,
+  onCloseMenu,
+  onSetCategory,
+  onRenameFeed,
+  onRemoveFeed,
 }: {
   title: string;
   showHeading: boolean;
@@ -879,6 +933,13 @@ function FeedGroup({
   selectedFeedId: string | "all";
   unreadCounts: Record<string, number>;
   onSelect: (id: string) => void;
+  allCategories: string[];
+  openMenuFeedId: string | null;
+  onOpenMenu: (id: string) => void;
+  onCloseMenu: () => void;
+  onSetCategory: (id: string, category: string) => void;
+  onRenameFeed: (id: string, title: string) => void;
+  onRemoveFeed: (id: string) => void;
 }) {
   const catKey = `cat:${title === "Uncategorized" ? "" : title}`;
   return (
@@ -901,29 +962,209 @@ function FeedGroup({
         <div className="space-y-0.5">
           {feeds.map((f) => {
             const s = feedStates[f.id];
+            const isSelected = selectedFeedId === f.id;
             return (
-              <button
+              <FeedRow
                 key={f.id}
-                onClick={() => onSelect(f.id)}
-                className={`w-full text-left rounded px-3 py-1.5 text-sm flex items-center justify-between gap-2 ${
-                  selectedFeedId === f.id
-                    ? "bg-background font-medium"
-                    : "hover:bg-background/60"
-                }`}
-              >
-                <span className="truncate">{f.title}</span>
-                <span className="text-xs opacity-70 shrink-0">
-                  {s?.status === "loading"
-                    ? "…"
-                    : s?.status === "error"
-                      ? "!"
-                      : unreadCounts[f.id] || ""}
-                </span>
-              </button>
+                feed={f}
+                state={s}
+                isSelected={isSelected}
+                unreadCount={unreadCounts[f.id] ?? 0}
+                onSelect={() => onSelect(f.id)}
+                menuOpen={openMenuFeedId === f.id}
+                onOpenMenu={() => onOpenMenu(f.id)}
+                onCloseMenu={onCloseMenu}
+                allCategories={allCategories}
+                onSetCategory={onSetCategory}
+                onRenameFeed={onRenameFeed}
+                onRemoveFeed={onRemoveFeed}
+              />
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function FeedRow({
+  feed,
+  state,
+  isSelected,
+  unreadCount,
+  onSelect,
+  menuOpen,
+  onOpenMenu,
+  onCloseMenu,
+  allCategories,
+  onSetCategory,
+  onRenameFeed,
+  onRemoveFeed,
+}: {
+  feed: Feed;
+  state: FeedState | undefined;
+  isSelected: boolean;
+  unreadCount: number;
+  onSelect: () => void;
+  menuOpen: boolean;
+  onOpenMenu: () => void;
+  onCloseMenu: () => void;
+  allCategories: string[];
+  onSetCategory: (id: string, category: string) => void;
+  onRenameFeed: (id: string, title: string) => void;
+  onRemoveFeed: (id: string) => void;
+}) {
+  return (
+    <div
+      className={`group relative rounded ${
+        isSelected ? "bg-background font-medium" : "hover:bg-background/60"
+      }`}
+    >
+      <button
+        onClick={onSelect}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onOpenMenu();
+        }}
+        className="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 pr-8"
+        title={feed.url}
+      >
+        <span className="truncate">{feed.title}</span>
+        <span className="text-xs opacity-70 shrink-0">
+          {state?.status === "loading"
+            ? "…"
+            : state?.status === "error"
+              ? "!"
+              : unreadCount || ""}
+        </span>
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          if (menuOpen) onCloseMenu();
+          else onOpenMenu();
+        }}
+        className={`absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-xs rounded hover:bg-muted ${
+          menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+        }`}
+        aria-label="Feed options"
+        title="Feed options"
+      >
+        ⋯
+      </button>
+      {menuOpen && (
+        <FeedMenu
+          feed={feed}
+          allCategories={allCategories}
+          onClose={onCloseMenu}
+          onSetCategory={(c) => {
+            onSetCategory(feed.id, c);
+            onCloseMenu();
+          }}
+          onRenameFeed={(title) => {
+            onRenameFeed(feed.id, title);
+            onCloseMenu();
+          }}
+          onRemoveFeed={() => {
+            onRemoveFeed(feed.id);
+            onCloseMenu();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function FeedMenu({
+  feed,
+  allCategories,
+  onClose,
+  onSetCategory,
+  onRenameFeed,
+  onRemoveFeed,
+}: {
+  feed: Feed;
+  allCategories: string[];
+  onClose: () => void;
+  onSetCategory: (category: string) => void;
+  onRenameFeed: (title: string) => void;
+  onRemoveFeed: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (!ref.current) return;
+      if (!ref.current.contains(e.target as Node)) onClose();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      className="absolute right-1 top-[100%] z-30 mt-1 w-56 rounded border border-border bg-background shadow-lg p-1 text-sm"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wider opacity-60">
+        Category
+      </div>
+      <button
+        onClick={() => onSetCategory("")}
+        className={`w-full text-left px-2 py-1 rounded text-xs hover:bg-muted flex items-center justify-between ${
+          !feed.category ? "font-medium" : ""
+        }`}
+      >
+        <span>Uncategorized</span>
+        {!feed.category && <span>✓</span>}
+      </button>
+      {allCategories.map((c) => (
+        <button
+          key={c}
+          onClick={() => onSetCategory(c)}
+          className={`w-full text-left px-2 py-1 rounded text-xs hover:bg-muted flex items-center justify-between ${
+            feed.category === c ? "font-medium" : ""
+          }`}
+        >
+          <span className="truncate">{c}</span>
+          {feed.category === c && <span className="shrink-0">✓</span>}
+        </button>
+      ))}
+      <button
+        onClick={() => {
+          const next = window.prompt("New category name");
+          if (next && next.trim()) onSetCategory(next.trim());
+        }}
+        className="w-full text-left px-2 py-1 rounded text-xs hover:bg-muted opacity-70"
+      >
+        + New category…
+      </button>
+      <div className="my-1 border-t border-border" />
+      <button
+        onClick={() => {
+          const next = window.prompt("Rename feed", feed.title);
+          if (next && next.trim()) onRenameFeed(next.trim());
+        }}
+        className="w-full text-left px-2 py-1 rounded text-xs hover:bg-muted"
+      >
+        Rename feed…
+      </button>
+      <button
+        onClick={() => {
+          if (window.confirm(`Remove "${feed.title}"?`)) onRemoveFeed();
+        }}
+        className="w-full text-left px-2 py-1 rounded text-xs text-red-500 hover:bg-red-500/10"
+      >
+        Remove feed
+      </button>
     </div>
   );
 }

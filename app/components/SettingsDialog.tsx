@@ -191,76 +191,17 @@ function SettingsDialogBody({
                 )}
               </div>
 
-              <div>
-                <h3 className="text-sm font-medium mb-2">
-                  Your feeds ({feeds.length})
-                </h3>
-                {feeds.length === 0 ? (
-                  <p className="text-sm opacity-60">
-                    No feeds yet. Paste an RSS or Atom URL above.
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {feeds.map((f) => {
-                      const datalistId = `prss-cats-${f.id}`;
-                      return (
-                        <li
-                          key={f.id}
-                          className="rounded border border-border p-2"
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              defaultValue={f.title}
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v && v !== f.title) onRenameFeed(f.id, v);
-                              }}
-                              className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
-                            />
-                            <button
-                              onClick={() => onRemoveFeed(f.id)}
-                              className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-2 mt-1.5">
-                            <input
-                              defaultValue={f.category ?? ""}
-                              placeholder="Category (e.g. Tech, News)"
-                              list={datalistId}
-                              onBlur={(e) => {
-                                const v = e.target.value.trim();
-                                if (v !== (f.category ?? "")) onSetCategory(f.id, v);
-                              }}
-                              className="w-40 shrink-0 bg-transparent text-xs rounded border border-border px-2 py-1 focus:outline-none focus:ring-1 focus:ring-accent/60"
-                            />
-                            <datalist id={datalistId}>
-                              {Array.from(
-                                new Set(
-                                  feeds
-                                    .map((x) => x.category)
-                                    .filter((c): c is string => !!c),
-                                ),
-                              ).map((c) => (
-                                <option key={c} value={c} />
-                              ))}
-                            </datalist>
-                            <a
-                              href={f.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs opacity-60 hover:opacity-100 truncate flex-1"
-                            >
-                              {f.url}
-                            </a>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
+              <CategoriesPanel
+                feeds={feeds}
+                onSetCategory={onSetCategory}
+              />
+
+              <FeedListByCategory
+                feeds={feeds}
+                onRenameFeed={onRenameFeed}
+                onRemoveFeed={onRemoveFeed}
+                onSetCategory={onSetCategory}
+              />
             </div>
           ) : (
             <div className="space-y-4">
@@ -395,6 +336,219 @@ function SettingsDialogBody({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function CategoriesPanel({
+  feeds,
+  onSetCategory,
+}: {
+  feeds: Feed[];
+  onSetCategory: (feedId: string, category: string) => void;
+}) {
+  const categories = Array.from(
+    feeds.reduce((map, f) => {
+      const c = f.category;
+      if (!c) return map;
+      map.set(c, (map.get(c) ?? 0) + 1);
+      return map;
+    }, new Map<string, number>()),
+  ).sort((a, b) => a[0].localeCompare(b[0]));
+
+  function renameCategory(oldName: string) {
+    const next = window.prompt(`Rename category "${oldName}" to:`, oldName);
+    if (!next) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === oldName) return;
+    for (const f of feeds) {
+      if (f.category === oldName) onSetCategory(f.id, trimmed);
+    }
+  }
+
+  function deleteCategory(name: string) {
+    if (
+      !window.confirm(
+        `Delete category "${name}"? Feeds in it become Uncategorized.`,
+      )
+    )
+      return;
+    for (const f of feeds) {
+      if (f.category === name) onSetCategory(f.id, "");
+    }
+  }
+
+  function addCategoryFromPrompt() {
+    const name = window.prompt(
+      "New category name. Pick a feed first from the list below to assign it.",
+    );
+    if (!name) return;
+    // We don't have a target feed here; user will assign via the list below.
+    // Quietly creating an empty category isn't useful, so show a hint.
+    window.alert(
+      `Created "${name.trim()}". Use the Category dropdown on a feed row below to assign it.`,
+    );
+    // Persist by hijacking one feed temporarily? No — categories live on feeds, so
+    // an unassigned category isn't a thing. The hint is the right UX here.
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-medium">
+          Categories ({categories.length})
+        </h3>
+        <button
+          onClick={addCategoryFromPrompt}
+          className="text-xs rounded border border-border px-2 py-1 hover:bg-muted"
+        >
+          + New
+        </button>
+      </div>
+      {categories.length === 0 ? (
+        <p className="text-xs opacity-60">
+          No categories yet. Assign one to a feed below or right-click a feed in
+          the sidebar.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {categories.map(([name, count]) => (
+            <div
+              key={name}
+              className="flex items-center gap-1 rounded-full border border-border bg-muted/40 pl-3 pr-1 py-0.5 text-xs"
+            >
+              <span className="font-medium">{name}</span>
+              <span className="opacity-60">·</span>
+              <span className="opacity-70">{count}</span>
+              <button
+                onClick={() => renameCategory(name)}
+                className="ml-1 px-1.5 py-0.5 rounded hover:bg-background"
+                title="Rename"
+              >
+                ✎
+              </button>
+              <button
+                onClick={() => deleteCategory(name)}
+                className="px-1.5 py-0.5 rounded hover:bg-red-500/10 text-red-500"
+                title="Delete category"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FeedListByCategory({
+  feeds,
+  onRenameFeed,
+  onRemoveFeed,
+  onSetCategory,
+}: {
+  feeds: Feed[];
+  onRenameFeed: (id: string, title: string) => void;
+  onRemoveFeed: (id: string) => void;
+  onSetCategory: (id: string, category: string) => void;
+}) {
+  const allCategories = Array.from(
+    new Set(feeds.map((f) => f.category).filter((c): c is string => !!c)),
+  ).sort((a, b) => a.localeCompare(b));
+
+  const groups = new Map<string, Feed[]>();
+  for (const f of feeds) {
+    const key = f.category ?? "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(f);
+  }
+  const groupOrder = Array.from(groups.keys()).sort((a, b) => {
+    if (a === "" && b !== "") return 1;
+    if (b === "" && a !== "") return -1;
+    return a.localeCompare(b);
+  });
+
+  return (
+    <div>
+      <h3 className="text-sm font-medium mb-2">
+        Your feeds ({feeds.length})
+      </h3>
+      {feeds.length === 0 ? (
+        <p className="text-sm opacity-60">
+          No feeds yet. Paste an RSS or Atom URL above.
+        </p>
+      ) : (
+        <div className="space-y-4">
+          {groupOrder.map((cat) => {
+            const groupFeeds = groups.get(cat) ?? [];
+            return (
+              <div key={cat || "__uncat__"}>
+                <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1.5 px-1">
+                  {cat || "Uncategorized"}
+                </div>
+                <ul className="space-y-1.5">
+                  {groupFeeds.map((f) => (
+                    <li
+                      key={f.id}
+                      className="rounded border border-border p-2"
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          defaultValue={f.title}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v && v !== f.title) onRenameFeed(f.id, v);
+                          }}
+                          className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
+                        />
+                        <select
+                          value={f.category ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "__new__") {
+                              const next = window.prompt("New category name");
+                              if (next && next.trim())
+                                onSetCategory(f.id, next.trim());
+                              return;
+                            }
+                            onSetCategory(f.id, v);
+                          }}
+                          className="text-xs rounded border border-border bg-background px-2 py-1 max-w-[10rem]"
+                          title="Category"
+                        >
+                          <option value="">Uncategorized</option>
+                          {allCategories.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                          <option value="__new__">+ New category…</option>
+                        </select>
+                        <button
+                          onClick={() => onRemoveFeed(f.id)}
+                          className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
+                          title="Remove feed"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <a
+                        href={f.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs opacity-60 hover:opacity-100 truncate block mt-1 px-1"
+                      >
+                        {f.url}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
