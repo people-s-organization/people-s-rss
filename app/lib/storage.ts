@@ -7,6 +7,18 @@ const AI_KEY = "prss:ai";
 const READ_KEY = "prss:read";
 const SUMMARIES_KEY = "prss:summaries";
 const INITIALIZED_KEY = "prss:initialized";
+const FILTER_KEY = "prss:filterMode";
+
+export function loadFilterMode(): "unread" | "all" {
+  if (typeof window === "undefined") return "unread";
+  const raw = window.localStorage.getItem(FILTER_KEY);
+  return raw === "all" ? "all" : "unread";
+}
+
+export function saveFilterMode(mode: "unread" | "all") {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(FILTER_KEY, mode);
+}
 
 export function isInitialized(): boolean {
   if (typeof window === "undefined") return false;

@@ -7,12 +7,14 @@ import {
   isInitialized,
   loadAIConfig,
   loadFeeds,
+  loadFilterMode,
   loadRead,
   loadSummaries,
   markInitialized,
   randomId,
   saveAIConfig,
   saveFeeds,
+  saveFilterMode,
   saveRead,
   saveSummaries,
 } from "@/app/lib/storage";
@@ -63,7 +65,11 @@ export function Reader() {
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(
     new Set(),
   );
-  const [filterMode, setFilterMode] = useState<"unread" | "all">("unread");
+  const [filterMode, setFilterModeState] = useState<"unread" | "all">("unread");
+  const setFilterMode = (m: "unread" | "all") => {
+    setFilterModeState(m);
+    saveFilterMode(m);
+  };
   const [openFeedMenuId, setOpenFeedMenuId] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const syncReady = useRef(false);
@@ -86,6 +92,7 @@ export function Reader() {
     setAIConfig(loadAIConfig());
     setReadSet(loadRead());
     setSummaries(loadSummaries());
+    setFilterModeState(loadFilterMode());
     setHydrated(true);
   }, []);
 
@@ -235,24 +242,32 @@ export function Reader() {
     return list;
   }, [feeds, feedStates]);
 
-  const visibleArticles = useMemo(() => {
-    let list = allArticles;
+  const scopedArticles = useMemo(() => {
     if (typeof selectedFeedId === "string" && selectedFeedId.startsWith("cat:")) {
       const cat = selectedFeedId.slice(4);
       const feedIds = new Set(
         feeds.filter((f) => (f.category ?? "") === cat).map((f) => f.id),
       );
-      list = list.filter((a) => feedIds.has(a.feedId));
-    } else if (selectedFeedId !== "all") {
-      list = list.filter((a) => a.feedId === selectedFeedId);
+      return allArticles.filter((a) => feedIds.has(a.feedId));
     }
-    if (filterMode === "unread") {
-      list = list.filter(
-        (a) => !readSet.has(a.id) || a.id === selectedArticleId,
-      );
+    if (selectedFeedId !== "all") {
+      return allArticles.filter((a) => a.feedId === selectedFeedId);
     }
-    return list;
-  }, [allArticles, selectedFeedId, feeds, filterMode, readSet, selectedArticleId]);
+    return allArticles;
+  }, [allArticles, selectedFeedId, feeds]);
+
+  const totalInScope = scopedArticles.length;
+  const unreadInScope = useMemo(
+    () => scopedArticles.reduce((n, a) => (readSet.has(a.id) ? n : n + 1), 0),
+    [scopedArticles, readSet],
+  );
+
+  const visibleArticles = useMemo(() => {
+    if (filterMode === "all") return scopedArticles;
+    return scopedArticles.filter(
+      (a) => !readSet.has(a.id) || a.id === selectedArticleId,
+    );
+  }, [scopedArticles, filterMode, readSet, selectedArticleId]);
 
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
@@ -586,23 +601,45 @@ export function Reader() {
           <div className="flex items-center rounded border border-border overflow-hidden shrink-0">
             <button
               onClick={() => setFilterMode("unread")}
-              className={`text-xs px-2 py-1 ${
+              className={`text-xs px-2 py-1 flex items-center gap-1 ${
                 filterMode === "unread"
                   ? "bg-foreground text-background"
                   : "hover:bg-muted"
               }`}
             >
-              Unread
+              <span>Unread</span>
+              {unreadInScope > 0 && (
+                <span
+                  className={`text-[10px] px-1 rounded ${
+                    filterMode === "unread"
+                      ? "bg-background/20"
+                      : "bg-muted text-foreground"
+                  }`}
+                >
+                  {unreadInScope}
+                </span>
+              )}
             </button>
             <button
               onClick={() => setFilterMode("all")}
-              className={`text-xs px-2 py-1 ${
+              className={`text-xs px-2 py-1 flex items-center gap-1 ${
                 filterMode === "all"
                   ? "bg-foreground text-background"
                   : "hover:bg-muted"
               }`}
             >
-              All
+              <span>All</span>
+              {totalInScope > 0 && (
+                <span
+                  className={`text-[10px] px-1 rounded ${
+                    filterMode === "all"
+                      ? "bg-background/20"
+                      : "bg-muted text-foreground"
+                  }`}
+                >
+                  {totalInScope}
+                </span>
+              )}
             </button>
           </div>
           <button
@@ -634,11 +671,21 @@ export function Reader() {
                     className={`w-full text-left p-3 ${
                       isSelected
                         ? "bg-muted"
-                        : "hover:bg-muted/60"
-                    }`}
+                        : isRead
+                          ? "hover:bg-muted/60"
+                          : "hover:bg-muted/60"
+                    } ${isRead ? "opacity-55" : ""}`}
                   >
                     <div className="flex items-center gap-2 text-xs opacity-70 mb-1">
-                      {!isRead && (
+                      {isRead ? (
+                        <span
+                          className="text-[10px] opacity-60 shrink-0"
+                          aria-label="read"
+                          title="Read"
+                        >
+                          ✓
+                        </span>
+                      ) : (
                         <span
                           className="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0"
                           aria-label="unread"
@@ -652,7 +699,7 @@ export function Reader() {
                       )}
                     </div>
                     <h3
-                      className={`text-sm leading-snug ${isRead ? "opacity-70" : "font-medium"}`}
+                      className={`text-sm leading-snug ${isRead ? "" : "font-medium"}`}
                     >
                       {a.title}
                     </h3>
