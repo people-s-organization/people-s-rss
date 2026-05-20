@@ -1061,11 +1061,22 @@ export function Reader() {
                     Open original ↗
                   </a>
                   <button
+                    onClick={() => handleSummarize(selectedArticle)}
+                    disabled={summarizing === selectedArticle.id}
+                    className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
+                  >
+                    {summarizing === selectedArticle.id
+                      ? "Summarizing…"
+                      : summaries[selectedArticle.id]
+                        ? "Re-summarize"
+                        : "✨ AI summarize"}
+                  </button>
+                  <button
                     onClick={() => handleExtractFull(selectedArticle)}
                     disabled={
                       extracting === selectedArticle.id || !selectedArticle.link
                     }
-                    className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 hover:bg-muted disabled:opacity-30"
+                    className="ml-auto text-xs rounded px-2 py-1 opacity-40 hover:opacity-100 hover:bg-muted disabled:opacity-20"
                     title={
                       extracting === selectedArticle.id
                         ? "Loading full article…"
@@ -1076,17 +1087,6 @@ export function Reader() {
                     aria-label="Load full article"
                   >
                     {extracting === selectedArticle.id ? "…" : "📖"}
-                  </button>
-                  <button
-                    onClick={() => handleSummarize(selectedArticle)}
-                    disabled={summarizing === selectedArticle.id}
-                    className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
-                  >
-                    {summarizing === selectedArticle.id
-                      ? "Summarizing…"
-                      : summaries[selectedArticle.id]
-                        ? "Re-summarize"
-                        : "✨ AI summarize"}
                   </button>
                 </div>
                 {summaryError && (
