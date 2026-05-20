@@ -687,32 +687,14 @@ export function Reader() {
                   </div>
                 </div>
               )}
-            <div className="max-w-3xl mx-auto px-10 py-8 prose-content">
-              {fullContent[selectedArticle.id] ? (
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: fullContent[selectedArticle.id],
-                  }}
-                />
-              ) : selectedArticle.contentHtml ? (
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: selectedArticle.contentHtml,
-                  }}
-                />
-              ) : (
-                <p className="opacity-60 text-sm">
-                  No content provided in the feed.{" "}
-                  <a
-                    href={selectedArticle.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Read on the source site.
-                  </a>
-                </p>
-              )}
-            </div>
+            <ArticleBody
+              article={selectedArticle}
+              html={
+                fullContent[selectedArticle.id] ??
+                selectedArticle.contentHtml ??
+                undefined
+              }
+            />
           </article>
         ) : (
           <div className="flex-1 grid place-items-center text-sm opacity-60">
@@ -746,6 +728,116 @@ export function Reader() {
           extractError={extractError}
           onExtract={() => handleExtractFull(selectedArticle)}
         />
+      )}
+    </div>
+  );
+}
+
+function ArticleBody({
+  article,
+  html,
+}: {
+  article: Article;
+  html?: string;
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [toc, setToc] = useState<{ id: string; text: string; level: number }[]>(
+    [],
+  );
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root || !html) {
+      setToc([]);
+      setActiveId(null);
+      return;
+    }
+    const headings = Array.from(
+      root.querySelectorAll<HTMLHeadingElement>(
+        "h1[id], h2[id], h3[id], h4[id]",
+      ),
+    );
+    const items = headings.map((h) => ({
+      id: h.id,
+      text: (h.textContent ?? "").trim(),
+      level: parseInt(h.tagName.slice(1), 10),
+    }));
+    setToc(items);
+    if (items.length === 0) {
+      setActiveId(null);
+      return;
+    }
+
+    const scroller = root.closest("article");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActiveId(visible[0].target.id);
+      },
+      {
+        root: scroller ?? undefined,
+        rootMargin: "0px 0px -65% 0px",
+        threshold: 0,
+      },
+    );
+    for (const h of headings) observer.observe(h);
+    return () => observer.disconnect();
+  }, [html, article.id]);
+
+  function jumpTo(id: string) {
+    const root = containerRef.current;
+    if (!root) return;
+    const target = root.querySelector(`#${CSS.escape(id)}`);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    setActiveId(id);
+  }
+
+  return (
+    <div className="relative">
+      <div className="max-w-3xl mx-auto px-10 py-8 prose-content" ref={containerRef}>
+        {html ? (
+          <div dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <p className="opacity-60 text-sm">
+            No content provided in the feed.{" "}
+            <a href={article.link} target="_blank" rel="noopener noreferrer">
+              Read on the source site.
+            </a>
+          </p>
+        )}
+      </div>
+      {toc.length >= 2 && (
+        <aside className="hidden xl:block absolute top-8 right-6 w-52">
+          <div className="sticky top-4 max-h-[calc(100dvh-6rem)] overflow-y-auto">
+            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
+              On this page
+            </div>
+            <ul className="space-y-0.5 text-xs">
+              {toc.map((it) => (
+                <li
+                  key={it.id}
+                  style={{ paddingLeft: `${(it.level - 1) * 0.5}rem` }}
+                >
+                  <button
+                    onClick={() => jumpTo(it.id)}
+                    className={`text-left w-full truncate rounded px-2 py-1 hover:bg-muted ${
+                      activeId === it.id
+                        ? "text-accent font-medium bg-muted"
+                        : "opacity-70 hover:opacity-100"
+                    }`}
+                    title={it.text}
+                  >
+                    {it.text || "(untitled)"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
       )}
     </div>
   );

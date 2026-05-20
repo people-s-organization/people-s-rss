@@ -227,6 +227,8 @@ const ALLOWED_TAGS = new Set([
   "div", "span",
 ]);
 
+const HEADING_ATTRS = new Set(["id"]);
+
 const ALLOWED_ATTRS: Record<string, Set<string>> = {
   a: new Set(["href", "title", "rel", "target"]),
   img: new Set([
@@ -242,6 +244,12 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
   source: new Set(["src", "srcset", "sizes", "media", "type"]),
   td: new Set(["colspan", "rowspan"]),
   th: new Set(["colspan", "rowspan", "scope"]),
+  h1: HEADING_ATTRS,
+  h2: HEADING_ATTRS,
+  h3: HEADING_ATTRS,
+  h4: HEADING_ATTRS,
+  h5: HEADING_ATTRS,
+  h6: HEADING_ATTRS,
 };
 
 const CLASS_ALLOWLIST: Record<string, Set<string>> = {
