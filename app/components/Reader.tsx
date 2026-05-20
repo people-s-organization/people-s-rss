@@ -664,9 +664,17 @@ export function Reader() {
               const isSelected = selectedArticleId === a.id;
               return (
                 <li key={a.id}>
-                  <button
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => selectArticle(a.id)}
-                    className={`w-full text-left p-3 ${
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        selectArticle(a.id);
+                      }
+                    }}
+                    className={`block w-full text-left p-3 cursor-pointer select-none ${
                       isSelected ? "bg-muted" : "hover:bg-muted/60"
                     } ${isRead ? "opacity-70" : ""}`}
                   >
@@ -693,16 +701,16 @@ export function Reader() {
                       )}
                     </div>
                     <h3
-                      className={`text-sm leading-snug ${isRead ? "" : "font-medium"}`}
+                      className={`text-sm leading-snug break-words ${isRead ? "" : "font-medium"}`}
                     >
                       {a.title}
                     </h3>
                     {a.contentText && (
-                      <p className="text-xs opacity-60 mt-1 line-clamp-2">
+                      <p className="text-xs opacity-60 mt-1 line-clamp-2 break-words">
                         {a.contentText}
                       </p>
                     )}
-                  </button>
+                  </div>
                 </li>
               );
             })
