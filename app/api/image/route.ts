@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
+import sharp from "sharp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 25 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
+const DEFAULT_MAX_WIDTH = 1600;
+const ABS_MAX_WIDTH = 2400;
 
 const ALLOWED_TYPES = /^image\//;
+const PASS_THROUGH_TYPES = /^image\/(svg\+xml|gif|x-icon|vnd\.microsoft\.icon)/;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -21,6 +25,14 @@ export async function GET(request: Request) {
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     return new NextResponse("Unsupported protocol", { status: 400 });
   }
+
+  const widthParam = parseInt(searchParams.get("w") ?? "", 10);
+  const targetWidth = Math.min(
+    ABS_MAX_WIDTH,
+    Number.isFinite(widthParam) && widthParam > 0
+      ? widthParam
+      : DEFAULT_MAX_WIDTH,
+  );
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -43,23 +55,41 @@ export async function GET(request: Request) {
     if (!ALLOWED_TYPES.test(type)) {
       return new NextResponse(`Unsupported type ${type}`, { status: 415 });
     }
-    const buf = await res.arrayBuffer();
+    const buf = Buffer.from(await res.arrayBuffer());
     if (buf.byteLength > MAX_BYTES) {
       return new NextResponse("Too large", { status: 413 });
     }
-    return new NextResponse(buf, {
-      status: 200,
-      headers: {
-        "Content-Type": type,
-        "Content-Length": String(buf.byteLength),
-        "Cache-Control": "public, max-age=86400, s-maxage=604800, immutable",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
+
+    if (PASS_THROUGH_TYPES.test(type)) {
+      return raw200(buf, type);
+    }
+
+    try {
+      const out = await sharp(buf, { failOn: "none" })
+        .rotate()
+        .resize({ width: targetWidth, withoutEnlargement: true })
+        .webp({ quality: 82, effort: 4 })
+        .toBuffer();
+      return raw200(out, "image/webp");
+    } catch {
+      return raw200(buf, type);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Image proxy failed";
     return new NextResponse(message, { status: 500 });
   } finally {
     clearTimeout(timer);
   }
+}
+
+function raw200(body: Buffer, type: string): NextResponse {
+  return new NextResponse(new Uint8Array(body), {
+    status: 200,
+    headers: {
+      "Content-Type": type,
+      "Content-Length": String(body.byteLength),
+      "Cache-Control": "public, max-age=86400, s-maxage=604800, immutable",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }

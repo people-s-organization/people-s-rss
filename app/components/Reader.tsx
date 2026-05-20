@@ -14,6 +14,8 @@ import {
 } from "@/app/lib/storage";
 import { SettingsDialog } from "./SettingsDialog";
 
+const FEED_FULL_THRESHOLD = 1500;
+
 type FeedState =
   | { status: "idle" }
   | { status: "loading" }
@@ -249,6 +251,10 @@ export function Reader() {
     if (!selectedArticle.link) return;
     if (fullContent[selectedArticle.id]) return;
     if (extracting === selectedArticle.id) return;
+    if ((selectedArticle.contentText?.length ?? 0) >= FEED_FULL_THRESHOLD) {
+      // Feed already contains full content; skip auto-extract.
+      return;
+    }
     void handleExtractFull(selectedArticle);
     // handleExtractFull is stable enough; only react to article change
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -403,6 +409,7 @@ export function Reader() {
           endpoint: aiConfig.endpoint,
           apiKey: aiConfig.apiKey,
           model: aiConfig.model,
+          style: aiConfig.style,
           title: article.title,
           url: article.link,
           content: article.contentText || article.title,

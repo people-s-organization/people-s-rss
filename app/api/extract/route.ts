@@ -95,9 +95,28 @@ function isImageElement(tag: string): boolean {
   return tag === "img" || tag === "source";
 }
 
+const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
+
+function mergeEmojiHeadings(doc: Document): void {
+  const ps = Array.from(doc.querySelectorAll("p"));
+  for (const p of ps) {
+    const text = p.textContent ?? "";
+    const trimmed = text.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > 4) continue;
+    if (!EMOJI_ONLY.test(trimmed)) continue;
+    const next = p.nextElementSibling;
+    if (!next || next.tagName.toLowerCase() !== "p") continue;
+    const prefix = doc.createTextNode(`${trimmed} `);
+    next.insertBefore(prefix, next.firstChild);
+    p.remove();
+  }
+}
+
 function resolveUrls(html: string, baseUrl: string): string {
   const wrap = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
   const doc = wrap.window.document;
+  mergeEmojiHeadings(doc);
   doc.querySelectorAll("[src]").forEach((el) => {
     const v = el.getAttribute("src");
     if (!v) return;

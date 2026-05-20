@@ -19,10 +19,13 @@ export type Article = {
   summary?: string;
 };
 
+export type AIStyle = "openai" | "anthropic";
+
 export type AIConfig = {
   endpoint: string;
   apiKey: string;
   model: string;
+  style: AIStyle;
 };
 
 export type ParsedFeed = {

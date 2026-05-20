@@ -29,6 +29,51 @@ function pickText(node: unknown): string | undefined {
   return undefined;
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  ndash: "–",
+  mdash: "—",
+  hellip: "…",
+  laquo: "«",
+  raquo: "»",
+  lsquo: "‘",
+  rsquo: "’",
+  ldquo: "“",
+  rdquo: "”",
+  copy: "©",
+  reg: "®",
+  trade: "™",
+};
+
+export function decodeEntities(input: string): string {
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const isHex = body[1] === "x" || body[1] === "X";
+      const num = parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
+      if (Number.isFinite(num) && num > 0 && num <= 0x10ffff) {
+        try {
+          return String.fromCodePoint(num);
+        } catch {
+          return match;
+        }
+      }
+      return match;
+    }
+    const lower = body.toLowerCase();
+    return NAMED_ENTITIES[lower] ?? match;
+  });
+}
+
+function cleanText(s: string | undefined): string | undefined {
+  if (!s) return undefined;
+  return decodeEntities(s).replace(/\s+/g, " ").trim() || undefined;
+}
+
 function asArray<T>(v: T | T[] | undefined): T[] {
   if (v == null) return [];
   return Array.isArray(v) ? v : [v];
@@ -106,11 +151,11 @@ function parseRssChannel(channel: Record<string, unknown>): ParsedFeed {
 }
 
 function parseRssItem(item: Record<string, unknown>): ParsedItem {
-  const title = pickText(item.title) ?? "(untitled)";
+  const title = cleanText(pickText(item.title)) ?? "(untitled)";
   const link = pickText(item.link) ?? pickText(item.guid) ?? "";
   const author =
-    pickText(item.author) ??
-    pickText(item["dc:creator"]) ??
+    cleanText(pickText(item.author)) ??
+    cleanText(pickText(item["dc:creator"])) ??
     undefined;
   const publishedAt =
     parseDate(pickText(item.pubDate)) ??
@@ -134,10 +179,12 @@ function parseAtomFeed(feed: Record<string, unknown>): ParsedFeed {
 }
 
 function parseAtomEntry(entry: Record<string, unknown>): ParsedItem {
-  const title = pickText(entry.title) ?? "(untitled)";
+  const title = cleanText(pickText(entry.title)) ?? "(untitled)";
   const link = findAtomLink(entry.link) ?? "";
   const authorNode = entry.author as Record<string, unknown> | undefined;
-  const author = authorNode ? pickText(authorNode.name ?? authorNode) : undefined;
+  const author = authorNode
+    ? cleanText(pickText(authorNode.name ?? authorNode))
+    : undefined;
   const publishedAt =
     parseDate(pickText(entry.published)) ??
     parseDate(pickText(entry.updated));

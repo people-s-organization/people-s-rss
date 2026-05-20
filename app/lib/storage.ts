@@ -35,7 +35,16 @@ export function loadAIConfig(): AIConfig | null {
       typeof parsed.apiKey === "string" &&
       typeof parsed.model === "string"
     ) {
-      return parsed as AIConfig;
+      const style =
+        parsed.style === "anthropic" || parsed.style === "openai"
+          ? parsed.style
+          : "openai";
+      return {
+        endpoint: parsed.endpoint,
+        apiKey: parsed.apiKey,
+        model: parsed.model,
+        style,
+      } as AIConfig;
     }
     return null;
   } catch {

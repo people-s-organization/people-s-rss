@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { joinPath } from "@/app/lib/aiProviders";
+import type { AIStyle } from "@/app/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +9,7 @@ type Body = {
   endpoint?: string;
   apiKey?: string;
   model?: string;
+  style?: AIStyle;
   title?: string;
   content?: string;
   url?: string;
@@ -27,6 +30,7 @@ export async function POST(request: Request) {
   const endpoint = body.endpoint?.trim();
   const apiKey = body.apiKey?.trim();
   const model = body.model?.trim();
+  const style: AIStyle = body.style === "anthropic" ? "anthropic" : "openai";
   if (!endpoint || !apiKey || !model) {
     return NextResponse.json(
       { error: "endpoint, apiKey, and model are required" },
@@ -52,7 +56,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Empty content" }, { status: 400 });
   }
   const language = body.language || "the same language as the article";
-
+  const systemPrompt = `You summarize RSS articles. Reply in ${language}. Produce 3-6 concise bullet points capturing key facts, conclusions, and any numbers. No preamble.`;
   const userPrompt = [
     body.title ? `Title: ${body.title}` : null,
     body.url ? `URL: ${body.url}` : null,
@@ -63,33 +67,21 @@ export async function POST(request: Request) {
     .filter(Boolean)
     .join("\n");
 
-  const completionsUrl = buildCompletionsUrl(endpointUrl);
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(completionsUrl, {
+    const { url, headers, payload, parseSummary } =
+      style === "anthropic"
+        ? anthropicRequest(endpoint, apiKey, model, systemPrompt, userPrompt)
+        : openaiRequest(endpoint, apiKey, model, systemPrompt, userPrompt);
+
+    const res = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        messages: [
-          {
-            role: "system",
-            content: `You summarize RSS articles. Reply in ${language}. Produce 3-6 concise bullet points capturing key facts, conclusions, and any numbers. No preamble.`,
-          },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0.3,
-      }),
+      headers,
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
-
     const text = await res.text();
     if (!res.ok) {
       return NextResponse.json(
@@ -107,7 +99,7 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
-    const summary = extractSummary(json);
+    const summary = parseSummary(json);
     if (!summary) {
       return NextResponse.json(
         { error: "No summary in response" },
@@ -123,14 +115,57 @@ export async function POST(request: Request) {
   }
 }
 
-function buildCompletionsUrl(endpoint: URL): string {
-  const s = endpoint.toString();
-  if (/\/chat\/completions\/?$/.test(s)) return s;
-  const trimmed = s.replace(/\/+$/, "");
-  return `${trimmed}/chat/completions`;
+function openaiRequest(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+) {
+  const url = /\/chat\/completions\/?$/.test(endpoint)
+    ? endpoint
+    : joinPath(endpoint, "/chat/completions");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+  const payload = {
+    model,
+    stream: false,
+    temperature: 0.3,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  };
+  return { url, headers, payload, parseSummary: parseOpenAI };
 }
 
-function extractSummary(json: unknown): string | undefined {
+function anthropicRequest(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userPrompt: string,
+) {
+  const url = /\/messages\/?$/.test(endpoint)
+    ? endpoint
+    : joinPath(endpoint, "/messages");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+  };
+  const payload = {
+    model,
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  };
+  return { url, headers, payload, parseSummary: parseAnthropic };
+}
+
+function parseOpenAI(json: unknown): string | undefined {
   if (!json || typeof json !== "object") return undefined;
   const obj = json as Record<string, unknown>;
   const choices = obj.choices;
@@ -155,6 +190,26 @@ function extractSummary(json: unknown): string | undefined {
     }
     const text = first.text;
     if (typeof text === "string") return text.trim();
+  }
+  return undefined;
+}
+
+function parseAnthropic(json: unknown): string | undefined {
+  if (!json || typeof json !== "object") return undefined;
+  const obj = json as Record<string, unknown>;
+  const content = obj.content;
+  if (Array.isArray(content)) {
+    const joined = content
+      .map((p) => {
+        if (p && typeof p === "object" && "text" in p) {
+          const t = (p as { text?: unknown }).text;
+          return typeof t === "string" ? t : "";
+        }
+        return "";
+      })
+      .join("")
+      .trim();
+    if (joined) return joined;
   }
   return undefined;
 }

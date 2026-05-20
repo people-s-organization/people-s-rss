@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { AIConfig, Feed } from "@/app/lib/types";
+import type { AIConfig, AIStyle, Feed } from "@/app/lib/types";
+import { defaultEndpoint, defaultModel, detectStyle } from "@/app/lib/aiProviders";
 
 type Props = {
   open: boolean;
@@ -35,10 +36,73 @@ function SettingsDialogBody({
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
-  const [endpoint, setEndpoint] = useState(aiConfig?.endpoint ?? "https://api.openai.com/v1");
+  const [style, setStyle] = useState<AIStyle>(
+    aiConfig?.style ?? "openai",
+  );
+  const [endpoint, setEndpoint] = useState(
+    aiConfig?.endpoint ?? defaultEndpoint(aiConfig?.style ?? "openai"),
+  );
   const [apiKey, setApiKey] = useState(aiConfig?.apiKey ?? "");
-  const [model, setModel] = useState(aiConfig?.model ?? "gpt-4o-mini");
+  const [model, setModel] = useState(
+    aiConfig?.model ?? defaultModel(aiConfig?.style ?? "openai"),
+  );
+  const [models, setModels] = useState<{ id: string; label?: string }[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [aiSaved, setAiSaved] = useState(false);
+
+  function handleStyleChange(next: AIStyle) {
+    setStyle(next);
+    setModels([]);
+    setModelsError(null);
+    // Switch defaults if user hasn't customized
+    if (endpoint === defaultEndpoint(style)) setEndpoint(defaultEndpoint(next));
+    if (model === defaultModel(style)) setModel(defaultModel(next));
+  }
+
+  function handleEndpointChange(value: string) {
+    setEndpoint(value);
+    const detected = detectStyle(value);
+    if (detected !== style) {
+      setStyle(detected);
+      setModels([]);
+      setModelsError(null);
+    }
+  }
+
+  async function handleFetchModels() {
+    if (!endpoint.trim() || !apiKey.trim()) {
+      setModelsError("Fill endpoint and API key first.");
+      return;
+    }
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const res = await fetch("/api/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          apiKey: apiKey.trim(),
+          style,
+        }),
+      });
+      const data = (await res.json()) as {
+        models?: { id: string; label?: string }[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      const list = data.models ?? [];
+      setModels(list);
+      if (list.length > 0 && !list.find((m) => m.id === model)) {
+        setModel(list[0].id);
+      }
+    } catch (err) {
+      setModelsError(err instanceof Error ? err.message : "Fetch failed");
+    } finally {
+      setModelsLoading(false);
+    }
+  }
 
   async function handleAdd() {
     const url = newUrl.trim();
@@ -63,6 +127,7 @@ function SettingsDialogBody({
         endpoint: endpoint.trim(),
         apiKey: apiKey.trim(),
         model: model.trim(),
+        style,
       });
     }
     setAiSaved(true);
@@ -208,21 +273,41 @@ function SettingsDialogBody({
           ) : (
             <div className="space-y-4">
               <p className="text-sm opacity-70">
-                Configure your own OpenAI-compatible endpoint. Your key is
-                stored locally in your browser and forwarded through this app
-                only when you click &ldquo;Summarize&rdquo;.
+                Bring your own AI endpoint. Your key stays in your browser and
+                is only forwarded through this app when you click
+                &ldquo;Summarize&rdquo;.
               </p>
+
+              <div>
+                <label className="text-sm font-medium block mb-1">API style</label>
+                <div className="flex gap-2">
+                  <StyleButton
+                    active={style === "openai"}
+                    onClick={() => handleStyleChange("openai")}
+                    label="OpenAI"
+                    sub="/chat/completions"
+                  />
+                  <StyleButton
+                    active={style === "anthropic"}
+                    onClick={() => handleStyleChange("anthropic")}
+                    label="Anthropic"
+                    sub="/messages"
+                  />
+                </div>
+              </div>
 
               <div>
                 <label className="text-sm font-medium block mb-1">Endpoint base URL</label>
                 <input
                   value={endpoint}
-                  onChange={(e) => setEndpoint(e.target.value)}
-                  placeholder="https://api.openai.com/v1"
+                  onChange={(e) => handleEndpointChange(e.target.value)}
+                  placeholder={defaultEndpoint(style)}
                   className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                 />
                 <p className="text-xs opacity-60 mt-1">
-                  We append <code>/chat/completions</code> automatically.
+                  We append{" "}
+                  <code>{style === "anthropic" ? "/messages" : "/chat/completions"}</code>{" "}
+                  for inference and <code>/models</code> for the list.
                 </p>
               </div>
 
@@ -232,19 +317,48 @@ function SettingsDialogBody({
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-…"
+                  placeholder={style === "anthropic" ? "sk-ant-…" : "sk-…"}
                   className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                 />
               </div>
 
               <div>
                 <label className="text-sm font-medium block mb-1">Model</label>
-                <input
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="gpt-4o-mini"
-                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
-                />
+                <div className="flex items-center gap-2">
+                  <select
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
+                  >
+                    {!models.find((m) => m.id === model) && model && (
+                      <option value={model}>{model}</option>
+                    )}
+                    {models.length === 0 && !model && (
+                      <option value="">Fetch models to pick one…</option>
+                    )}
+                    {models.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label ? `${m.label} (${m.id})` : m.id}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleFetchModels}
+                    disabled={modelsLoading}
+                    className="text-xs rounded border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50 shrink-0"
+                    title="Fetch model list from endpoint"
+                  >
+                    {modelsLoading ? "…" : "↻ Fetch"}
+                  </button>
+                </div>
+                {modelsError && (
+                  <p className="text-xs text-red-500 mt-1">{modelsError}</p>
+                )}
+                {models.length > 0 && !modelsError && (
+                  <p className="text-xs opacity-60 mt-1">
+                    {models.length} models loaded
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-3">
@@ -258,9 +372,11 @@ function SettingsDialogBody({
                   <button
                     onClick={() => {
                       onSaveAI(null);
-                      setEndpoint("https://api.openai.com/v1");
+                      setStyle("openai");
+                      setEndpoint(defaultEndpoint("openai"));
                       setApiKey("");
-                      setModel("gpt-4o-mini");
+                      setModel(defaultModel("openai"));
+                      setModels([]);
                     }}
                     className="rounded border border-border px-3 py-1.5 text-sm"
                   >
@@ -276,5 +392,31 @@ function SettingsDialogBody({
         </div>
       </div>
     </div>
+  );
+}
+
+function StyleButton({
+  active,
+  onClick,
+  label,
+  sub,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  sub: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 rounded border px-3 py-2 text-left text-sm transition-colors ${
+        active
+          ? "border-accent bg-accent/10 text-foreground"
+          : "border-border opacity-70 hover:opacity-100"
+      }`}
+    >
+      <div className="font-medium">{label}</div>
+      <div className="text-[10px] opacity-60 font-mono">{sub}</div>
+    </button>
   );
 }
