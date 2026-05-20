@@ -706,7 +706,7 @@ export function Reader() {
                       {a.title}
                     </h3>
                     {a.contentText && (
-                      <p className="text-xs opacity-60 mt-1 line-clamp-2 break-words">
+                      <p className="text-xs opacity-60 mt-1 break-words overflow-hidden max-h-[2.8em] leading-snug">
                         {a.contentText}
                       </p>
                     )}
