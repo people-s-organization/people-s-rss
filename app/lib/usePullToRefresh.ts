@@ -11,12 +11,12 @@ export type PullState = {
   busy: boolean;
 };
 
-const THRESHOLD = 70;
-const MAX_PULL = 110;
-const TOUCH_RESISTANCE = 0.5;
-const WHEEL_RESISTANCE = 0.6;
-const WHEEL_IDLE_MS = 220;
-const WHEEL_RELEASE_MS = 250;
+const THRESHOLD = 90;
+const MAX_PULL = 130;
+const TOUCH_RESISTANCE = 0.35;
+const WHEEL_RESISTANCE = 0.28;
+const WHEEL_IDLE_MS = 240;
+const WHEEL_RELEASE_MS = 260;
 
 export type PullHandlers = {
   onPullDown?: () => Promise<void> | void;

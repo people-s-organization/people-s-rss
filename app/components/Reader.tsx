@@ -275,6 +275,7 @@ export function Reader() {
   const autoRefreshedRef = useRef<Set<string>>(new Set());
   const articleListRef = useRef<HTMLOListElement>(null);
   const [displayLimit, setDisplayLimit] = useState(50);
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [pagination, setPagination] = useState<
     Record<string, { page: number; exhausted: boolean }>
   >({});
@@ -791,7 +792,7 @@ export function Reader() {
         </nav>
       </aside>
 
-      <section className="w-full md:w-96 shrink-0 border-r border-border flex flex-col min-w-0">
+      <section className="relative w-full md:w-96 shrink-0 border-r border-border flex flex-col min-w-0">
         <div className="px-3 sm:px-4 py-3 border-b border-border flex items-center gap-2 flex-nowrap min-w-0">
           <button
             aria-label="Settings"
@@ -869,6 +870,10 @@ export function Reader() {
             ✓ all
           </button>
         </div>
+        <ScrollWatcher
+          listRef={articleListRef}
+          onChange={setShowBackToTop}
+        />
         {pull.direction === "down" && (
           <PullIndicator
             distance={pull.distance}
@@ -990,9 +995,33 @@ export function Reader() {
           />
         )}
         {!hasMoreCached && allExhausted && visibleArticles.length > 0 && (
-          <div className="text-center text-[10px] opacity-40 py-2 border-t border-border">
-            — no older articles available —
+          <div className="px-4 py-5 border-t border-border bg-muted/30 text-center">
+            <div className="text-xs opacity-60 mb-1">
+              You&apos;ve reached the end
+            </div>
+            <div className="text-[11px] opacity-50">
+              No older articles available from{" "}
+              {scopeFeedsRef.current.length === 1 ? "this feed" : "these feeds"}
+              . Pull down to refresh for new ones.
+            </div>
           </div>
+        )}
+        {showBackToTop && (
+          <button
+            onClick={() => {
+              articleListRef.current?.scrollTo({
+                top: 0,
+                behavior: "smooth",
+              });
+            }}
+            className="absolute bottom-5 right-5 z-20 w-10 h-10 rounded-full bg-foreground text-background shadow-lg flex items-center justify-center hover:opacity-90 transition-opacity"
+            aria-label="Back to top"
+            title="Back to top"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
+              <path d="M8 3l-5 5h3v5h4V8h3L8 3z"/>
+            </svg>
+          </button>
         )}
       </section>
 
@@ -1496,6 +1525,35 @@ function SummaryCard({ text }: { text: string }) {
       </div>
     </div>
   );
+}
+
+function ScrollWatcher({
+  listRef,
+  onChange,
+}: {
+  listRef: React.RefObject<HTMLOListElement | null>;
+  onChange: (visible: boolean) => void;
+}) {
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    let lastVisible = false;
+    function check() {
+      const node = listRef.current;
+      if (!node) return;
+      const next = node.scrollTop > 300;
+      if (next !== lastVisible) {
+        lastVisible = next;
+        onChange(next);
+      }
+    }
+    el.addEventListener("scroll", check, { passive: true });
+    check();
+    return () => {
+      el.removeEventListener("scroll", check);
+    };
+  }, [listRef, onChange]);
+  return null;
 }
 
 function PullIndicator({
