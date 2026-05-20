@@ -850,9 +850,13 @@ function ArticleBody({
     setActiveId(id);
   }
 
+  const hasToc = toc.length >= 2;
   return (
-    <div className="relative">
-      <div className="max-w-3xl mx-auto px-10 py-8 prose-content" ref={containerRef}>
+    <div className="flex justify-center items-stretch gap-6 xl:gap-10">
+      <div
+        className="prose-content px-6 sm:px-10 py-8 max-w-3xl flex-1 min-w-0"
+        ref={containerRef}
+      >
         {html ? (
           <div dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
@@ -864,9 +868,9 @@ function ArticleBody({
           </p>
         )}
       </div>
-      {toc.length >= 2 && (
-        <aside className="hidden xl:block absolute top-8 right-6 w-52">
-          <div className="sticky top-4 max-h-[calc(100dvh-6rem)] overflow-y-auto">
+      {hasToc && (
+        <aside className="hidden xl:block w-44 shrink-0 self-stretch py-8 pr-4">
+          <div className="sticky top-1/2 -translate-y-1/2 max-h-[80dvh] overflow-y-auto">
             <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
               On this page
             </div>

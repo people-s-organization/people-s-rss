@@ -2,6 +2,8 @@ import { JSDOM } from "jsdom";
 
 const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
 const MERGE_TARGET_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6"]);
+const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
+const ICON_WIDTH_THRESHOLD = 96;
 
 function isEmojiOnlyParagraph(p: Element): boolean {
   if (p.children.length > 0) return false;
@@ -18,11 +20,28 @@ function isImageOnlyParagraph(p: Element): Element | null {
   return imgs[0];
 }
 
-function getIconFromElement(el: Element): Element | null {
+function getIconCandidate(el: Element): Element | null {
   const tag = el.tagName.toLowerCase();
   if (tag === "img") return el;
-  if (tag === "p" || tag === "div") return isImageOnlyParagraph(el);
+  if (tag === "p" || tag === "div" || tag === "section") {
+    return isImageOnlyParagraph(el);
+  }
   return null;
+}
+
+function looksLikeIconImg(img: Element): boolean {
+  const alt = (img.getAttribute("alt") ?? "").trim();
+  if (alt && alt.length <= 2 && /\p{Extended_Pictographic}/u.test(alt)) {
+    return true;
+  }
+  const src = img.getAttribute("src") ?? "";
+  if (/\/emoji\//i.test(src)) return true;
+  const widthStr = img.getAttribute("width");
+  if (widthStr) {
+    const w = parseInt(widthStr, 10);
+    if (Number.isFinite(w) && w > 0 && w <= ICON_WIDTH_THRESHOLD) return true;
+  }
+  return false;
 }
 
 // Descend through single-block wrappers (e.g. <div><p>text</p></div>) to find
@@ -74,15 +93,21 @@ export function mergeIcons(doc: Document): void {
     p.remove();
   });
 
-  // Pass 2: collapse image-icon blocks into the following text block
+  // Pass 2: collapse image-icon blocks into the following text block.
+  // - If the next block is a heading, treat the image as a section marker
+  //   (always merge — section markers are conventionally small).
+  // - Otherwise (next is <p>), only merge if the image looks icon-sized
+  //   (emoji alt, width≤96, or emoji CDN src). Hero photos pass through.
   Array.from(doc.body.querySelectorAll("*")).forEach((el) => {
-    if (!el.parentNode) return; // already removed above
-    const icon = getIconFromElement(el);
+    if (!el.parentNode) return;
+    const icon = getIconCandidate(el);
     if (!icon) return;
     const next = el.nextElementSibling;
     if (!next) return;
     const target = resolveMergeTarget(next);
     if (!target) return;
+    const targetTag = target.tagName.toLowerCase();
+    if (!HEADING_TAGS.has(targetTag) && !looksLikeIconImg(icon)) return;
     const clone = icon.cloneNode(true) as Element;
     clone.classList.add("prss-icon");
     target.insertBefore(doc.createTextNode(" "), target.firstChild);
