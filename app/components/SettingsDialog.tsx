@@ -8,6 +8,7 @@ import { defaultEndpoint, detectStyle } from "@/app/lib/aiProviders";
 type Props = {
   open: boolean;
   onClose: () => void;
+  initialTab?: "feeds" | "ai";
   feeds: Feed[];
   onAddFeed: (url: string) => Promise<void>;
   onRemoveFeed: (id: string) => void;
@@ -24,6 +25,7 @@ export function SettingsDialog(props: Props) {
 
 function SettingsDialogBody({
   onClose,
+  initialTab,
   feeds,
   onAddFeed,
   onRemoveFeed,
@@ -32,7 +34,7 @@ function SettingsDialogBody({
   aiConfig,
   onSaveAI,
 }: Props) {
-  const [tab, setTab] = useState<"feeds" | "ai">("feeds");
+  const [tab, setTab] = useState<"feeds" | "ai">(initialTab ?? "feeds");
   const [newUrl, setNewUrl] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);

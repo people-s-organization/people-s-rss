@@ -55,6 +55,9 @@ export function Reader() {
   const [selectedFeedId, setSelectedFeedId] = useState<string | "all">("all");
   const [selectedArticleId, setSelectedArticleId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    "feeds" | "ai"
+  >("feeds");
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [summarizing, setSummarizing] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -454,7 +457,9 @@ export function Reader() {
 
   async function handleSummarize(article: Article) {
     if (!aiConfig) {
-      setSummaryError("Configure your AI endpoint in Settings first.");
+      setSummaryError(null);
+      setSettingsInitialTab("ai");
+      setSettingsOpen(true);
       return;
     }
     setSummarizing(article.id);
@@ -834,7 +839,11 @@ export function Reader() {
 
       <SettingsDialog
         open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setSettingsInitialTab("feeds");
+        }}
+        initialTab={settingsInitialTab}
         feeds={feeds}
         onAddFeed={handleAddFeed}
         onRemoveFeed={handleRemoveFeed}
