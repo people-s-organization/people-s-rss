@@ -2,7 +2,6 @@ import { JSDOM } from "jsdom";
 
 const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
 const MERGE_TARGET_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6"]);
-const HEADING_TAGS = new Set(["h1", "h2", "h3", "h4", "h5", "h6"]);
 const ICON_WIDTH_THRESHOLD = 96;
 
 function isEmojiOnlyParagraph(p: Element): boolean {
@@ -31,15 +30,27 @@ function getIconCandidate(el: Element): Element | null {
 
 function looksLikeIconImg(img: Element): boolean {
   const alt = (img.getAttribute("alt") ?? "").trim();
+  // Single-emoji alt → icon
   if (alt && alt.length <= 2 && /\p{Extended_Pictographic}/u.test(alt)) {
     return true;
   }
+  // Known emoji CDN
   const src = img.getAttribute("src") ?? "";
   if (/\/emoji\//i.test(src)) return true;
+  // Explicit width is the most reliable signal: a hero photo is almost
+  // always emitted with a large width attribute, while sticker-style icons
+  // are at most a couple hundred pixels.
   const widthStr = img.getAttribute("width");
   if (widthStr) {
     const w = parseInt(widthStr, 10);
-    if (Number.isFinite(w) && w > 0 && w <= ICON_WIDTH_THRESHOLD) return true;
+    if (Number.isFinite(w) && w > 0) {
+      return w <= ICON_WIDTH_THRESHOLD;
+    }
+  }
+  // No width attribute: fall back to a short label-style alt
+  // (e.g. iFanr's "重磅", "大公司" section markers).
+  if (alt && alt.length <= 4) {
+    return true;
   }
   return false;
 }
@@ -93,21 +104,18 @@ export function mergeIcons(doc: Document): void {
     p.remove();
   });
 
-  // Pass 2: collapse image-icon blocks into the following text block.
-  // - If the next block is a heading, treat the image as a section marker
-  //   (always merge — section markers are conventionally small).
-  // - Otherwise (next is <p>), only merge if the image looks icon-sized
-  //   (emoji alt, width≤96, or emoji CDN src). Hero photos pass through.
+  // Pass 2: collapse image-icon blocks into the following text/heading
+  // block. Only merge when the image looks icon-sized — hero photos that
+  // happen to sit before a paragraph or heading stay as their own block.
   Array.from(doc.body.querySelectorAll("*")).forEach((el) => {
     if (!el.parentNode) return;
     const icon = getIconCandidate(el);
     if (!icon) return;
+    if (!looksLikeIconImg(icon)) return;
     const next = el.nextElementSibling;
     if (!next) return;
     const target = resolveMergeTarget(next);
     if (!target) return;
-    const targetTag = target.tagName.toLowerCase();
-    if (!HEADING_TAGS.has(targetTag) && !looksLikeIconImg(icon)) return;
     const clone = icon.cloneNode(true) as Element;
     clone.classList.add("prss-icon");
     target.insertBefore(doc.createTextNode(" "), target.firstChild);
