@@ -222,16 +222,30 @@ const ALLOWED_TAGS = new Set([
   "b", "strong", "i", "em", "u", "s", "small", "sub", "sup", "mark",
   "ul", "ol", "li", "dl", "dt", "dd",
   "blockquote", "pre", "code", "kbd", "samp",
-  "img", "figure", "figcaption",
+  "img", "picture", "source", "figure", "figcaption",
   "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption",
   "div", "span",
 ]);
 
 const ALLOWED_ATTRS: Record<string, Set<string>> = {
   a: new Set(["href", "title", "rel", "target"]),
-  img: new Set(["src", "alt", "title", "width", "height"]),
+  img: new Set([
+    "src",
+    "srcset",
+    "sizes",
+    "alt",
+    "title",
+    "width",
+    "height",
+    "class",
+  ]),
+  source: new Set(["src", "srcset", "sizes", "media", "type"]),
   td: new Set(["colspan", "rowspan"]),
   th: new Set(["colspan", "rowspan", "scope"]),
+};
+
+const CLASS_ALLOWLIST: Record<string, Set<string>> = {
+  img: new Set(["prss-icon"]),
 };
 
 const URL_ATTRS = new Set(["href", "src"]);
@@ -268,8 +282,17 @@ export function sanitizeHtml(input: string): string {
       while ((attrMatch = attrRegex.exec(rawAttrs)) !== null) {
         const name = attrMatch[1].toLowerCase();
         if (!attrAllow.has(name)) continue;
-        const value = attrMatch[3] ?? attrMatch[4] ?? attrMatch[5] ?? "";
+        let value = attrMatch[3] ?? attrMatch[4] ?? attrMatch[5] ?? "";
         if (URL_ATTRS.has(name) && !isSafeUrl(value)) continue;
+        if (name === "class") {
+          const allowedClasses = CLASS_ALLOWLIST[tag];
+          if (!allowedClasses) continue;
+          const kept = value
+            .split(/\s+/)
+            .filter((c) => allowedClasses.has(c));
+          if (kept.length === 0) continue;
+          value = kept.join(" ");
+        }
         const safeValue = value
           .replace(/&/g, "&amp;")
           .replace(/"/g, "&quot;")

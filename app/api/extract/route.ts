@@ -97,19 +97,47 @@ function isImageElement(tag: string): boolean {
 
 const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
 
+function isEmojiOnlyParagraph(p: Element): boolean {
+  // Only emoji text, nothing else
+  if (p.children.length > 0) return false;
+  const trimmed = (p.textContent ?? "").trim();
+  if (!trimmed || trimmed.length > 4) return false;
+  return EMOJI_ONLY.test(trimmed);
+}
+
+function isImageOnlyParagraph(p: Element): Element | null {
+  // Returns the single <img> if the <p> is essentially just one image
+  const text = (p.textContent ?? "").trim();
+  if (text) return null;
+  const imgs = p.querySelectorAll("img");
+  if (imgs.length !== 1) return null;
+  return imgs[0];
+}
+
 function mergeEmojiHeadings(doc: Document): void {
   const ps = Array.from(doc.querySelectorAll("p"));
   for (const p of ps) {
-    const text = p.textContent ?? "";
-    const trimmed = text.trim();
-    if (!trimmed) continue;
-    if (trimmed.length > 4) continue;
-    if (!EMOJI_ONLY.test(trimmed)) continue;
     const next = p.nextElementSibling;
     if (!next || next.tagName.toLowerCase() !== "p") continue;
-    const prefix = doc.createTextNode(`${trimmed} `);
-    next.insertBefore(prefix, next.firstChild);
-    p.remove();
+    const nextText = (next.textContent ?? "").trim();
+    if (!nextText) continue;
+
+    if (isEmojiOnlyParagraph(p)) {
+      const prefix = doc.createTextNode(`${(p.textContent ?? "").trim()} `);
+      next.insertBefore(prefix, next.firstChild);
+      p.remove();
+      continue;
+    }
+
+    const img = isImageOnlyParagraph(p);
+    if (img) {
+      const clone = img.cloneNode(true) as Element;
+      clone.classList.add("prss-icon");
+      const space = doc.createTextNode(" ");
+      next.insertBefore(space, next.firstChild);
+      next.insertBefore(clone, next.firstChild);
+      p.remove();
+    }
   }
 }
 
