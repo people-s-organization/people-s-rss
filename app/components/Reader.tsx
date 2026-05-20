@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
-import { usePullToRefresh } from "@/app/lib/usePullToRefresh";
+import { usePullGestures } from "@/app/lib/usePullToRefresh";
 import {
   isInitialized,
   loadAIConfig,
@@ -65,6 +65,7 @@ export function Reader() {
   const [summarizing, setSummarizing] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   const [fullContent, setFullContent] = useState<Record<string, string>>({});
+  const [fullContentText, setFullContentText] = useState<Record<string, string>>({});
   const [extracting, setExtracting] = useState<string | null>(null);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -136,7 +137,7 @@ export function Reader() {
       if (!res.ok || !data.feed) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
-      const articles: Article[] = data.feed.items.map((item) => ({
+      const fresh: Article[] = data.feed.items.map((item) => ({
         id: stableId(feed.id, item.guid || item.link || item.title),
         feedId: feed.id,
         feedTitle: feed.title,
@@ -149,14 +150,19 @@ export function Reader() {
         hasFullContent: item.hasFullContent,
       }));
       const fetchedAt = Date.now();
-      setFeedStates((prev) => ({
-        ...prev,
-        [feed.id]: { status: "ready", articles, fetchedAt },
-      }));
-      // Persist to localStorage cache for next reload
-      const cache = loadFeedCache();
-      cache[feed.id] = { articles, fetchedAt };
-      saveFeedCache(cache);
+      setFeedStates((prev) => {
+        const previous = prev[feed.id];
+        const previousArticles =
+          previous?.status === "ready" ? previous.articles : [];
+        const articles = mergeArticleLists(previousArticles, fresh);
+        const cache = loadFeedCache();
+        cache[feed.id] = { articles, fetchedAt };
+        saveFeedCache(cache);
+        return {
+          ...prev,
+          [feed.id]: { status: "ready", articles, fetchedAt },
+        };
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load";
       setFeedStates((prev) => {
@@ -268,12 +274,7 @@ export function Reader() {
 
   const autoRefreshedRef = useRef<Set<string>>(new Set());
   const articleListRef = useRef<HTMLOListElement>(null);
-
-  async function refreshAllFeeds() {
-    await Promise.all(feeds.map((f) => refreshFeed(f)));
-  }
-
-  const pull = usePullToRefresh(articleListRef, refreshAllFeeds);
+  const [displayLimit, setDisplayLimit] = useState(50);
   useEffect(() => {
     if (!hydrated) return;
     for (const feed of feeds) {
@@ -313,12 +314,45 @@ export function Reader() {
     [scopedArticles, readSet],
   );
 
-  const visibleArticles = useMemo(() => {
+  const fullVisibleArticles = useMemo(() => {
     if (filterMode === "all") return scopedArticles;
     return scopedArticles.filter(
       (a) => !readSet.has(a.id) || a.id === selectedArticleId,
     );
   }, [scopedArticles, filterMode, readSet, selectedArticleId]);
+
+  const visibleArticles = useMemo(
+    () => fullVisibleArticles.slice(0, displayLimit),
+    [fullVisibleArticles, displayLimit],
+  );
+
+  // Reset display window when scope or filter changes
+  const scopeKeyRef = useRef<string>("");
+  const nextScopeKey = `${selectedFeedId}|${filterMode}`;
+  if (scopeKeyRef.current !== nextScopeKey) {
+    scopeKeyRef.current = nextScopeKey;
+    if (displayLimit !== 50) {
+      setDisplayLimit(50);
+    }
+  }
+
+  async function refreshAllFeeds() {
+    await Promise.all(feeds.map((f) => refreshFeed(f)));
+  }
+
+  async function loadOlder() {
+    const totalAvailable = fullVisibleArticles.length;
+    if (displayLimit < totalAvailable) {
+      setDisplayLimit((n) => Math.min(n + 50, totalAvailable));
+      return;
+    }
+    await refreshAllFeeds();
+  }
+
+  const pull = usePullGestures(articleListRef, {
+    onPullDown: refreshAllFeeds,
+    onPullUp: loadOlder,
+  });
 
   const allCategoryNames = useMemo(() => {
     const set = new Set<string>();
@@ -495,6 +529,12 @@ export function Reader() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       setFullContent((prev) => ({ ...prev, [article.id]: data.contentHtml! }));
+      if (data.contentText) {
+        setFullContentText((prev) => ({
+          ...prev,
+          [article.id]: data.contentText!,
+        }));
+      }
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : "Extract failed");
     } finally {
@@ -512,6 +552,37 @@ export function Reader() {
     setSummarizing(article.id);
     setSummaryError(null);
     try {
+      // Prefer extracted full text — if the feed only had a snippet but the
+      // article needs full text, we wait briefly for the auto-extract to
+      // resolve so summarize works on the real article body.
+      let body = fullContentText[article.id] ?? "";
+      if (!body && !article.hasFullContent && article.link) {
+        try {
+          const res = await fetch(
+            `/api/extract?url=${encodeURIComponent(article.link)}`,
+          );
+          if (res.ok) {
+            const data = (await res.json()) as {
+              contentHtml?: string;
+              contentText?: string;
+            };
+            if (data.contentText) {
+              body = data.contentText;
+              setFullContentText((prev) => ({
+                ...prev,
+                [article.id]: data.contentText!,
+              }));
+              if (data.contentHtml) {
+                setFullContent((prev) => ({
+                  ...prev,
+                  [article.id]: data.contentHtml!,
+                }));
+              }
+            }
+          }
+        } catch {}
+      }
+      if (!body) body = article.contentText || article.title;
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -522,7 +593,7 @@ export function Reader() {
           style: aiConfig.style,
           title: article.title,
           url: article.link,
-          content: article.contentText || article.title,
+          content: body,
         }),
       });
       const data = (await res.json()) as { summary?: string; error?: string };
@@ -563,18 +634,7 @@ export function Reader() {
           user={session?.user}
           syncStatus={syncStatus}
         />
-        <div className="px-4 py-2 flex items-center gap-2">
-          <button
-            onClick={() => {
-              for (const f of feeds) void refreshFeed(f);
-            }}
-            disabled={refreshingAll || feeds.length === 0}
-            className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-background"
-          >
-            {refreshingAll ? "Refreshing…" : "Refresh all"}
-          </button>
-        </div>
-        <nav className="flex-1 overflow-y-auto px-2 pb-4">
+        <nav className="flex-1 overflow-y-auto px-2 pb-4 pt-3">
           <button
             onClick={() => {
               setSelectedFeedId("all");
@@ -710,24 +770,36 @@ export function Reader() {
             ✓ all
           </button>
         </div>
-        <PullToRefreshIndicator
-          distance={pull.distance}
-          releasing={pull.releasing}
-          refreshing={pull.refreshing}
-        />
+        {pull.direction === "down" && (
+          <PullIndicator
+            distance={pull.distance}
+            releasing={pull.releasing}
+            busy={pull.busy}
+            label={
+              pull.busy
+                ? "Refreshing…"
+                : pull.releasing
+                  ? "Release to refresh"
+                  : "Pull to refresh"
+            }
+            arrow="↓"
+            position="top"
+          />
+        )}
         <ol
           ref={articleListRef}
           className="flex-1 overflow-y-auto divide-y divide-border overscroll-y-contain"
           style={{
             transform:
-              pull.distance > 0 || pull.refreshing
+              pull.direction === "down" && (pull.distance > 0 || pull.busy)
                 ? `translateY(${pull.distance}px)`
                 : undefined,
-            transition: pull.refreshing
-              ? "transform 0.2s"
-              : pull.distance > 0
-                ? "none"
-                : "transform 0.2s",
+            transition:
+              pull.busy && pull.direction === "down"
+                ? "transform 0.2s"
+                : pull.distance > 0
+                  ? "none"
+                  : "transform 0.2s",
           }}
         >
           {visibleArticles.length === 0 ? (
@@ -796,6 +868,28 @@ export function Reader() {
             })
           )}
         </ol>
+        {pull.direction === "up" && (
+          <PullIndicator
+            distance={pull.distance}
+            releasing={pull.releasing}
+            busy={pull.busy}
+            label={
+              pull.busy
+                ? displayLimit < fullVisibleArticles.length
+                  ? "Loading…"
+                  : "Refreshing…"
+                : pull.releasing
+                  ? displayLimit < fullVisibleArticles.length
+                    ? "Release to load older"
+                    : "Release to refresh"
+                  : displayLimit < fullVisibleArticles.length
+                    ? "Pull up to load older"
+                    : "Pull up to refresh"
+            }
+            arrow="↑"
+            position="bottom"
+          />
+        )}
       </section>
 
       <main className="hidden md:flex flex-1 flex-col overflow-hidden">
@@ -925,10 +1019,6 @@ export function Reader() {
             setMobileFeedPickerOpen(false);
           }}
           onClose={() => setMobileFeedPickerOpen(false)}
-          refreshingAll={refreshingAll}
-          onRefreshAll={() => {
-            for (const f of feeds) void refreshFeed(f);
-          }}
         />
       )}
 
@@ -1072,8 +1162,6 @@ function MobileFeedPicker({
   unreadCounts,
   onSelect,
   onClose,
-  refreshingAll,
-  onRefreshAll,
 }: {
   feeds: Feed[];
   feedGroups: { key: string; feeds: Feed[] }[];
@@ -1082,8 +1170,6 @@ function MobileFeedPicker({
   unreadCounts: Record<string, number>;
   onSelect: (id: string) => void;
   onClose: () => void;
-  refreshingAll: boolean;
-  onRefreshAll: () => void;
 }) {
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
@@ -1096,13 +1182,6 @@ function MobileFeedPicker({
           ← Back
         </button>
         <h2 className="text-sm font-semibold flex-1">Feeds</h2>
-        <button
-          onClick={onRefreshAll}
-          disabled={refreshingAll || feeds.length === 0}
-          className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted"
-        >
-          {refreshingAll ? "…" : "Refresh"}
-        </button>
       </div>
       <nav className="flex-1 overflow-y-auto px-2 py-3">
         <button
@@ -1311,44 +1390,49 @@ function SummaryCard({ text }: { text: string }) {
   );
 }
 
-function PullToRefreshIndicator({
+function PullIndicator({
   distance,
   releasing,
-  refreshing,
+  busy,
+  label,
+  arrow,
+  position,
 }: {
   distance: number;
   releasing: boolean;
-  refreshing: boolean;
+  busy: boolean;
+  label: string;
+  arrow: "↑" | "↓";
+  position: "top" | "bottom";
 }) {
-  if (distance === 0 && !refreshing) return null;
-  const height = refreshing ? 44 : Math.min(60, distance);
-  const label = refreshing
-    ? "Refreshing…"
-    : releasing
-      ? "Release to refresh"
-      : "Pull to refresh";
+  if (distance === 0 && !busy) return null;
+  const height = busy ? 44 : Math.min(60, distance);
+  const flippedRotation =
+    arrow === "↓" ? (releasing ? 180 : 0) : releasing ? 0 : 180;
   return (
     <div
-      className="md:hidden flex items-center justify-center gap-2 text-xs opacity-70 overflow-hidden"
+      className={`flex items-center justify-center gap-2 text-xs opacity-70 overflow-hidden ${
+        position === "top" ? "" : "border-t border-border"
+      }`}
       style={{ height }}
     >
       <span
-        className={`inline-block w-4 h-4 ${
-          refreshing
+        className={`inline-block w-4 h-4 text-center leading-4 ${
+          busy
             ? "animate-spin border-2 border-current border-r-transparent rounded-full"
             : ""
         }`}
         style={
-          !refreshing
+          !busy
             ? {
-                transform: `rotate(${releasing ? 180 : 0}deg)`,
+                transform: `rotate(${flippedRotation}deg)`,
                 transition: "transform 0.15s",
               }
             : undefined
         }
         aria-hidden
       >
-        {!refreshing ? "↓" : ""}
+        {!busy ? arrow : ""}
       </span>
       <span>{label}</span>
     </div>
@@ -1827,24 +1911,36 @@ function MobileReader({
 }
 
 function formatDate(ts: number): string {
-  const d = new Date(ts);
   const now = Date.now();
   const diff = now - ts;
-  const day = 24 * 60 * 60 * 1000;
-  if (diff < day) {
-    return d.toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-  if (diff < 7 * day) {
-    return d.toLocaleDateString(undefined, { weekday: "short" });
-  }
+  const min = 60_000;
+  const hour = 60 * min;
+  const day = 24 * hour;
+  const week = 7 * day;
+  if (diff < 0) return "just now";
+  if (diff < min) return "just now";
+  if (diff < hour) return `${Math.floor(diff / min)}m ago`;
+  if (diff < day) return `${Math.floor(diff / hour)}h ago`;
+  if (diff < week) return `${Math.floor(diff / day)}d ago`;
+  const d = new Date(ts);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
-    year: d.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined,
+    year: sameYear ? undefined : "numeric",
   });
+}
+
+const ARTICLE_CACHE_LIMIT = 500;
+
+function mergeArticleLists(prev: Article[], next: Article[]): Article[] {
+  const byId = new Map<string, Article>();
+  for (const a of prev) byId.set(a.id, a);
+  for (const a of next) byId.set(a.id, a); // newer wins for shared ids
+  const merged = Array.from(byId.values()).sort(
+    (a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0),
+  );
+  return merged.slice(0, ARTICLE_CACHE_LIMIT);
 }
 
 function stableId(feedId: string, key: string): string {
