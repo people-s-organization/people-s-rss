@@ -873,7 +873,7 @@ export function Reader() {
 
       <section
         className={`relative w-full shrink-0 border-r border-border flex flex-col min-w-0 transition-[width,border-color] duration-200 ${
-          articlesPanelCollapsed ? "md:w-0 md:overflow-hidden md:border-r-0" : "md:w-96"
+          articlesPanelCollapsed ? "md:w-0 md:overflow-hidden md:border-r-0" : "md:w-80"
         }`}
       >
         <div className="px-3 sm:px-4 py-3 border-b border-border flex items-center gap-2 flex-nowrap min-w-0">
@@ -1281,6 +1281,7 @@ function ArticleBody({
     [],
   );
   const [activeId, setActiveId] = useState<string | null>(null);
+  const tocContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const root = containerRef.current;
@@ -1294,8 +1295,6 @@ function ArticleBody({
         "h1[id], h2[id], h3[id], h4[id]",
       ),
     );
-    const minTop = 260;
-    const maxTop = Math.max(minTop + 1, root.scrollHeight - 520);
     const items = headings
       .map((h) => ({
         id: h.id,
@@ -1303,7 +1302,7 @@ function ArticleBody({
         level: parseInt(h.tagName.slice(1), 10),
         top: h.offsetTop,
       }))
-      .filter((it) => it.top >= minTop && it.top <= maxTop);
+      .filter((it) => it.text.length > 0);
     setToc(items.map(({ id, text, level }) => ({ id, text, level })));
     if (items.length === 0) {
       setActiveId(null);
@@ -1329,6 +1328,17 @@ function ArticleBody({
     return () => target.removeEventListener("scroll", updateActive);
   }, [html, article.id]);
 
+  useEffect(() => {
+    if (!activeId) return;
+    const tocRoot = tocContainerRef.current;
+    if (!tocRoot) return;
+    const btn = tocRoot.querySelector<HTMLButtonElement>(
+      `button[data-toc-id="${CSS.escape(activeId)}"]`,
+    );
+    if (!btn) return;
+    btn.scrollIntoView({ block: "nearest" });
+  }, [activeId]);
+
   function jumpTo(id: string) {
     const root = containerRef.current;
     if (!root) return;
@@ -1340,11 +1350,13 @@ function ArticleBody({
 
   const hasToc = toc.length >= 2;
   return (
-    <div className="mx-auto flex w-full max-w-[1300px] items-start gap-6 px-6 sm:px-10">
-      <div
-        className="prose-content w-full max-w-3xl min-w-0 py-8"
-        ref={containerRef}
-      >
+    <div className="mx-auto w-full max-w-[1400px] px-6 sm:px-10">
+      <div className="xl:grid xl:grid-cols-[13rem_minmax(0,1fr)_13rem] xl:gap-6">
+        <div className="hidden xl:block" aria-hidden />
+        <div
+          className="prose-content w-full max-w-3xl min-w-0 py-8 xl:mx-auto"
+          ref={containerRef}
+        >
         {html ? (
           <div dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
@@ -1355,36 +1367,41 @@ function ArticleBody({
             </a>
           </p>
         )}
-      </div>
-      {hasToc && (
+        </div>
         <aside className="hidden xl:block w-52 shrink-0 py-8">
-          <div className="sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto">
-            <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
-              On this page
-            </div>
-            <ul className="space-y-0.5 text-xs">
-              {toc.map((it) => (
-                <li
-                  key={it.id}
-                  style={{ paddingLeft: `${(it.level - 1) * 0.5}rem` }}
-                >
-                  <button
-                    onClick={() => jumpTo(it.id)}
-                    className={`text-left w-full truncate rounded px-2 py-1 hover:bg-muted ${
-                      activeId === it.id
-                        ? "text-accent font-medium bg-muted"
-                        : "opacity-70 hover:opacity-100"
-                    }`}
-                    title={it.text}
+          {hasToc ? (
+            <div
+              ref={tocContainerRef}
+              className="sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto"
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
+                On this page
+              </div>
+              <ul className="space-y-0.5 text-xs">
+                {toc.map((it) => (
+                  <li
+                    key={it.id}
+                    style={{ paddingLeft: `${(it.level - 1) * 0.5}rem` }}
                   >
-                    {it.text || "(untitled)"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+                    <button
+                      onClick={() => jumpTo(it.id)}
+                      data-toc-id={it.id}
+                      className={`text-left w-full truncate rounded px-2 py-1 hover:bg-muted ${
+                        activeId === it.id
+                          ? "text-accent font-medium bg-muted"
+                          : "opacity-70 hover:opacity-100"
+                      }`}
+                      title={it.text}
+                    >
+                      {it.text || "(untitled)"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </aside>
-      )}
+      </div>
     </div>
   );
 }
