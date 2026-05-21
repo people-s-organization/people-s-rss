@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
+import { useTranslations } from "next-intl";
 import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
 import { usePullGestures } from "@/app/lib/usePullToRefresh";
 import {
@@ -51,39 +52,6 @@ type SyncStatus =
   | { state: "syncing" }
   | { state: "error"; error: string };
 
-type UILocale = "zh" | "en";
-const I18N = {
-  zh: {
-    allArticles: "全部文章",
-    uncategorized: "未分类",
-    unread: "未读",
-    all: "全部",
-    markAll: "全部已读",
-    noFeeds: "还没有订阅源。打开设置添加一个。",
-    selectArticle: "选择一篇文章开始阅读。",
-    expandSubscriptions: "展开订阅面板",
-    collapseSubscriptions: "折叠订阅面板",
-    expandArticles: "展开文章列表面板",
-    collapseArticles: "折叠文章列表面板",
-    subscriptions: "订阅",
-    list: "列表",
-  },
-  en: {
-    allArticles: "All articles",
-    uncategorized: "Uncategorized",
-    unread: "Unread",
-    all: "All",
-    markAll: "✓ all",
-    noFeeds: "No feeds yet. Open settings to add one.",
-    selectArticle: "Select an article to read.",
-    expandSubscriptions: "Expand subscriptions panel",
-    collapseSubscriptions: "Collapse subscriptions panel",
-    expandArticles: "Expand articles panel",
-    collapseArticles: "Collapse articles panel",
-    subscriptions: "Subscriptions",
-    list: "List",
-  },
-} as const;
 
 export function Reader() {
   const { data: session, status: authStatus } = useSession();
@@ -119,12 +87,7 @@ export function Reader() {
   const [articlesPanelCollapsed, setArticlesPanelCollapsed] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const [hasAIKey, setHasAIKey] = useState(false);
-  const [locale] = useState<UILocale>(() => {
-    if (typeof navigator === "undefined") return "zh";
-    const lang = (navigator.language || "").toLowerCase();
-    return lang.startsWith("zh") ? "zh" : "en";
-  });
-  const t = I18N[locale];
+  const t = useTranslations("Reader");
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -833,9 +796,9 @@ export function Reader() {
         }`}
       >
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h1 className="font-semibold tracking-tight">People&apos;s RSS</h1>
+          <h1 className="font-semibold tracking-tight">{t("appName")}</h1>
           <button
-            aria-label="Settings"
+            aria-label={t("settings")}
             onClick={() => setSettingsOpen(true)}
             className="text-sm rounded px-2 py-1 hover:bg-background"
           >
@@ -859,7 +822,7 @@ export function Reader() {
                 : "hover:bg-background/60"
             }`}
           >
-            <span>{t.allArticles}</span>
+            <span>{t("allArticles")}</span>
             {unreadCounts.__all > 0 && (
               <span className="text-xs opacity-70">{unreadCounts.__all}</span>
             )}
@@ -869,7 +832,7 @@ export function Reader() {
               <FeedGroup
                 key={group.key}
                 groupKey={group.key}
-                title={group.key === "" ? t.uncategorized : group.key}
+                title={group.key === "" ? t("uncategorized") : group.key}
                 showHeading={group.key !== "" || feedGroups.length > 1}
                 collapsed={collapsedCategories.has(group.key)}
                 onToggle={() =>
@@ -904,7 +867,7 @@ export function Reader() {
           </div>
           {feeds.length === 0 && hydrated && (
             <p className="text-xs opacity-60 px-3 mt-4">
-              {t.noFeeds}
+              {t("noFeeds")}
             </p>
           )}
         </nav>
@@ -912,8 +875,8 @@ export function Reader() {
       <button
         onClick={() => setFeedsPanelCollapsed((v) => !v)}
         className="hidden md:flex shrink-0 self-center h-20 w-3 items-center justify-center rounded-r border border-l-0 border-border bg-background text-[10px] hover:bg-muted"
-        aria-label={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
-        title={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
+        aria-label={feedsPanelCollapsed ? t("expandSubscriptions") : t("collapseSubscriptions")}
+        title={feedsPanelCollapsed ? t("expandSubscriptions") : t("collapseSubscriptions")}
       >
         {feedsPanelCollapsed ? "⟩" : "⟨"}
       </button>
@@ -925,7 +888,7 @@ export function Reader() {
       >
         <div className="px-3 sm:px-4 py-3 border-b border-border flex items-center gap-2 flex-nowrap min-w-0">
           <button
-            aria-label="Settings"
+            aria-label={t("settings")}
             onClick={() => setSettingsOpen(true)}
             className="md:hidden text-sm rounded px-2 py-1 hover:bg-muted shrink-0"
           >
@@ -934,16 +897,16 @@ export function Reader() {
           <button
             onClick={() => setMobileFeedPickerOpen(true)}
             className="text-sm font-semibold truncate flex-1 min-w-0 flex items-center gap-1 md:cursor-default md:hover:bg-transparent rounded px-1 hover:bg-muted md:pointer-events-none"
-            aria-label="Switch feed"
+            aria-label={t("switchFeed")}
           >
             <span className="truncate">
               {selectedFeedId === "all"
-                ? t.all
+                ? t("all")
                 : typeof selectedFeedId === "string" &&
                     selectedFeedId.startsWith("cat:")
-                  ? selectedFeedId.slice(4) || t.uncategorized
+                  ? selectedFeedId.slice(4) || t("uncategorized")
                   : feeds.find((f) => f.id === selectedFeedId)?.title ??
-                    "Articles"}
+                    t("allArticles")}
             </span>
             <span className="md:hidden text-[10px] opacity-60 shrink-0">▾</span>
           </button>
@@ -956,7 +919,7 @@ export function Reader() {
                   : "hover:bg-muted"
               }`}
             >
-              <span>{t.unread}</span>
+              <span>{t("unread")}</span>
               {unreadInScope > 0 && (
                 <span
                   className={`text-[10px] px-1 rounded ${
@@ -977,7 +940,7 @@ export function Reader() {
                   : "hover:bg-muted"
               }`}
             >
-              <span>{t.all}</span>
+              <span>{t("all")}</span>
               {totalInScope > 0 && (
                 <span
                   className={`text-[10px] px-1 rounded ${
@@ -995,9 +958,9 @@ export function Reader() {
             onClick={markAllRead}
             disabled={visibleArticles.length === 0}
             className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted shrink-0"
-            title={t.markAll}
+            title={t("markAll")}
           >
-            {t.markAll}
+            {t("markAll")}
           </button>
         </div>
         <ScrollWatcher
@@ -1011,10 +974,10 @@ export function Reader() {
             busy={pull.busy}
             label={
               pull.busy
-                ? "Refreshing…"
+                ? t("refreshing")
                 : pull.releasing
-                  ? "Release to refresh"
-                  : "Pull to refresh"
+                  ? t("releaseToRefresh")
+                  : t("pullToRefresh")
             }
             arrow="↓"
             position="top"
@@ -1039,10 +1002,10 @@ export function Reader() {
           {visibleArticles.length === 0 ? (
             <li className="p-4 text-sm opacity-60">
               {feeds.length === 0
-                ? "Add a feed in settings to get started."
+                ? t("addFeedHint")
                 : refreshingAll
-                  ? "Loading…"
-                  : "No articles."}
+                  ? t("loadingArticles")
+                  : t("noArticles")}
             </li>
           ) : (
             visibleArticles.map((a) => {
@@ -1068,21 +1031,21 @@ export function Reader() {
                       {isRead ? (
                         <span
                           className="text-[10px] opacity-60 shrink-0"
-                          aria-label="read"
-                          title="Read"
+                          aria-label={t("unread")}
+                          title={t("unread")}
                         >
                           ✓
                         </span>
                       ) : (
                         <span
                           className="inline-block w-1.5 h-1.5 rounded-full bg-accent shrink-0"
-                          aria-label="unread"
+                          aria-label={t("unread")}
                         />
                       )}
                       <span className="truncate">{a.feedTitle}</span>
                       {a.publishedAt && (
                         <span className="ml-auto shrink-0">
-                          {formatDate(a.publishedAt)}
+                          {formatDate(a.publishedAt, t)}
                         </span>
                       )}
                     </div>
@@ -1110,15 +1073,15 @@ export function Reader() {
             label={
               pull.busy
                 ? hasMoreCached
-                  ? "Loading…"
-                  : "Fetching older from source…"
+                  ? t("loadingOlder")
+                  : t("fetchingOlder")
                 : pull.releasing
                   ? hasMoreCached
-                    ? "Release to load older"
-                    : "Release to fetch older from source"
+                    ? t("releaseToLoadOlder")
+                    : t("releaseToFetchOlder")
                   : hasMoreCached
-                    ? "Pull up to load older"
-                    : "Pull up to fetch older from source"
+                    ? t("pullToLoadOlder")
+                    : t("pullToFetchOlder")
             }
             arrow="↑"
             position="bottom"
@@ -1126,13 +1089,11 @@ export function Reader() {
         )}
         {!hasMoreCached && allExhausted && visibleArticles.length > 0 && (
           <div className="px-4 py-5 border-t border-border bg-muted/30 text-center">
-            <div className="text-xs opacity-60 mb-1">
-              You&apos;ve reached the end
-            </div>
+            <div className="text-xs opacity-60 mb-1">{t("endOfList")}</div>
             <div className="text-[11px] opacity-50">
-              No older articles available from{" "}
-              {scopeFeedsRef.current.length === 1 ? "this feed" : "these feeds"}
-              . Pull down to refresh for new ones.
+              {scopeFeedsRef.current.length === 1
+                ? t("noOlderInFeed")
+                : t("noOlderInFeeds")}
             </div>
           </div>
         )}
@@ -1145,8 +1106,8 @@ export function Reader() {
               });
             }}
             className="absolute bottom-5 right-5 z-20 w-10 h-10 rounded-full bg-foreground text-background shadow-lg flex items-center justify-center hover:opacity-90 transition-opacity"
-            aria-label="Back to top"
-            title="Back to top"
+            aria-label={t("backToTop")}
+            title={t("backToTop")}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
               <path d="M8 3l-5 5h3v5h4V8h3L8 3z"/>
@@ -1157,8 +1118,8 @@ export function Reader() {
       <button
         onClick={() => setArticlesPanelCollapsed((v) => !v)}
         className="hidden md:flex shrink-0 self-center h-20 w-3 items-center justify-center rounded-r border border-l-0 border-border bg-background text-[10px] hover:bg-muted"
-        aria-label={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
-        title={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
+        aria-label={articlesPanelCollapsed ? t("expandArticles") : t("collapseArticles")}
+        title={articlesPanelCollapsed ? t("expandArticles") : t("collapseArticles")}
       >
         {articlesPanelCollapsed ? "⟩" : "⟨"}
       </button>
@@ -1182,7 +1143,7 @@ export function Reader() {
                   {selectedArticle.publishedAt && (
                     <>
                       <span>·</span>
-                      <span>{formatDate(selectedArticle.publishedAt)}</span>
+                      <span>{formatDate(selectedArticle.publishedAt, t)}</span>
                     </>
                   )}
                 </div>
@@ -1196,7 +1157,7 @@ export function Reader() {
                     rel="noopener noreferrer"
                     className="text-sm rounded border border-border px-3 py-1 hover:bg-muted"
                   >
-                    Open original ↗
+                    {t("openOriginal")} ↗
                   </a>
                   <button
                     onClick={() => handleSummarize(selectedArticle)}
@@ -1204,10 +1165,10 @@ export function Reader() {
                     className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
                   >
                     {summarizing === selectedArticle.id
-                      ? "Summarizing…"
+                      ? t("summarizing")
                       : summaries[selectedArticle.id]
-                        ? "Re-summarize"
-                        : "✨ AI summarize"}
+                        ? t("resummarize")
+                        : t("summarizeAction")}
                   </button>
                   <button
                     onClick={() => handleExtractFull(selectedArticle)}
@@ -1217,12 +1178,12 @@ export function Reader() {
                     className="ml-auto text-xs rounded px-2 py-1 opacity-40 hover:opacity-100 hover:bg-muted disabled:opacity-20"
                     title={
                       extracting === selectedArticle.id
-                        ? "Loading full article…"
+                        ? t("loadingFullArticleTitle")
                         : fullContent[selectedArticle.id]
-                          ? "Re-fetch full article from source"
-                          : "Fetch full article from source"
+                          ? t("reFetchFullArticle")
+                          : t("loadFullArticleTitle")
                     }
-                    aria-label="Load full article"
+                    aria-label={t("loadFullArticle")}
                   >
                     {extracting === selectedArticle.id ? "…" : "📖"}
                   </button>
@@ -1244,7 +1205,7 @@ export function Reader() {
                   <div className="flex items-center gap-2 text-sm rounded-md border border-border bg-muted/50 px-3 py-2">
                     <Spinner />
                     <span className="opacity-80">
-                      Loading full article from source…
+                      {t("loadingFullArticleInline")}
                     </span>
                   </div>
                 </div>
@@ -1260,7 +1221,7 @@ export function Reader() {
           </article>
         ) : (
           <div className="flex-1 grid place-items-center text-sm opacity-60">
-            {t.selectArticle}
+            {t("selectArticle")}
           </div>
         )}
       </main>
@@ -1298,7 +1259,6 @@ export function Reader() {
             setMobileFeedPickerOpen(false);
           }}
           onClose={() => setMobileFeedPickerOpen(false)}
-          locale={locale}
         />
       )}
 
@@ -1327,6 +1287,7 @@ function ArticleBody({
   article: Article;
   html?: string;
 }) {
+  const t = useTranslations("Reader");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [toc, setToc] = useState<{ id: string; text: string; level: number }[]>(
     [],
@@ -1412,9 +1373,9 @@ function ArticleBody({
           <div dangerouslySetInnerHTML={{ __html: html }} />
         ) : (
           <p className="opacity-60 text-sm">
-            No content provided in the feed.{" "}
+            {t("noContent")}{" "}
             <a href={article.link} target="_blank" rel="noopener noreferrer">
-              Read on the source site.
+              {t("readOnSource")}
             </a>
           </p>
         )}
@@ -1426,7 +1387,7 @@ function ArticleBody({
               className="sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto"
             >
               <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
-                On this page
+                {t("onThisPage")}
               </div>
               <ul className="space-y-0.5 text-xs">
                 {toc.map((it) => (
@@ -1444,7 +1405,7 @@ function ArticleBody({
                       }`}
                       title={it.text}
                     >
-                      {it.text || "(untitled)"}
+                      {it.text || t("untitled")}
                     </button>
                   </li>
                 ))}
@@ -1465,7 +1426,6 @@ function MobileFeedPicker({
   unreadCounts,
   onSelect,
   onClose,
-  locale,
 }: {
   feeds: Feed[];
   feedGroups: { key: string; feeds: Feed[] }[];
@@ -1474,20 +1434,19 @@ function MobileFeedPicker({
   unreadCounts: Record<string, number>;
   onSelect: (id: string) => void;
   onClose: () => void;
-  locale: UILocale;
 }) {
-  const t = I18N[locale];
+  const t = useTranslations("Reader");
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
         <button
           onClick={onClose}
           className="text-sm rounded px-2 py-1 hover:bg-muted"
-          aria-label="Back"
+          aria-label={t("back")}
         >
-          ← Back
+          ← {t("back")}
         </button>
-        <h2 className="text-sm font-semibold flex-1">{t.subscriptions}</h2>
+        <h2 className="text-sm font-semibold flex-1">{t("subscriptions")}</h2>
       </div>
       <nav className="flex-1 overflow-y-auto px-2 py-3">
         <button
@@ -1498,14 +1457,14 @@ function MobileFeedPicker({
               : "hover:bg-muted/60"
           }`}
         >
-          <span>{t.allArticles}</span>
+          <span>{t("allArticles")}</span>
           {unreadCounts.__all > 0 && (
             <span className="text-xs opacity-70">{unreadCounts.__all}</span>
           )}
         </button>
         <div className="mt-3 space-y-3">
           {feedGroups.map((group) => {
-            const label = group.key === "" ? t.uncategorized : group.key;
+            const label = group.key === "" ? t("uncategorized") : group.key;
             const catKey = `cat:${group.key}`;
             return (
               <div key={group.key || "__uncat__"}>
@@ -1542,7 +1501,11 @@ function MobileFeedPicker({
                         <span className="truncate">{f.title}</span>
                         <span
                           className="text-xs opacity-70 shrink-0"
-                          title={s?.status === "error" ? `加载失败：${s.error}` : undefined}
+                          title={
+                            s?.status === "error"
+                              ? t("loadFailed", { error: s.error })
+                              : undefined
+                          }
                         >
                           {s?.status === "loading"
                             ? "…"
@@ -1560,7 +1523,7 @@ function MobileFeedPicker({
         </div>
         {feeds.length === 0 && (
           <p className="text-xs opacity-60 px-3 mt-4">
-            {t.noFeeds}
+            {t("noFeeds")}
           </p>
         )}
       </nav>
@@ -1644,6 +1607,7 @@ function renderInline(text: string): React.ReactNode {
 
 function SummaryCard({ text }: { text: string }) {
   const blocks = useMemo(() => parseSummary(text), [text]);
+  const t = useTranslations("Reader");
   return (
     <div className="mt-4 relative overflow-hidden rounded-xl border border-accent/30 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent">
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,var(--accent),transparent_40%)] opacity-10" />
@@ -1655,7 +1619,7 @@ function SummaryCard({ text }: { text: string }) {
             </svg>
           </span>
           <div className="text-xs font-semibold uppercase tracking-wider text-accent">
-            AI Summary
+            {t("aiSummaryLabel")}
           </div>
         </div>
         <div className="text-sm leading-relaxed space-y-2.5">
@@ -1902,6 +1866,7 @@ function FeedRow({
   onRefreshFeed: (id: string) => void;
 }) {
   const errorMessage = state?.status === "error" ? state.error : null;
+  const t = useTranslations("Reader");
   return (
     <div
       className={`group relative rounded ${
@@ -1918,7 +1883,10 @@ function FeedRow({
         title={feed.url}
       >
         <span className="truncate">{feed.title}</span>
-        <span className="text-xs opacity-70 shrink-0" title={errorMessage ? `加载失败：${errorMessage}` : undefined}>
+        <span
+          className="text-xs opacity-70 shrink-0"
+          title={errorMessage ? t("loadFailed", { error: errorMessage }) : undefined}
+        >
           {state?.status === "loading"
             ? "…"
             : state?.status === "error"
@@ -1933,8 +1901,8 @@ function FeedRow({
           onRefreshFeed(feed.id);
         }}
         className="absolute right-7 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-xs rounded hover:bg-muted opacity-0 group-hover:opacity-100 focus:opacity-100"
-        aria-label={`Refresh ${feed.title}`}
-        title={`Refresh ${feed.title}`}
+        aria-label={t("refreshFeed", { title: feed.title })}
+        title={t("refreshFeed", { title: feed.title })}
       >
         ↻
         </button>
@@ -1948,8 +1916,8 @@ function FeedRow({
         className={`absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-xs rounded hover:bg-muted ${
           menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
         }`}
-        aria-label="Feed options"
-        title="Feed options"
+        aria-label={t("feedOptions")}
+        title={t("feedOptions")}
       >
         ⋯
       </button>
@@ -1992,6 +1960,7 @@ function FeedMenu({
   onRemoveFeed: () => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
+  const t = useTranslations("Reader");
 
   useEffect(() => {
     function onDown(e: MouseEvent) {
@@ -2016,7 +1985,7 @@ function FeedMenu({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-wider opacity-60">
-        Category
+        {t("categoryLabel")}
       </div>
       <button
         onClick={() => onSetCategory("")}
@@ -2024,7 +1993,7 @@ function FeedMenu({
           !feed.category ? "font-medium" : ""
         }`}
       >
-        <span>Uncategorized</span>
+        <span>{t("uncategorized")}</span>
         {!feed.category && <span>✓</span>}
       </button>
       {allCategories.map((c) => (
@@ -2041,30 +2010,30 @@ function FeedMenu({
       ))}
       <button
         onClick={() => {
-          const next = window.prompt("New category name");
+          const next = window.prompt(t("newCategoryPrompt"));
           if (next && next.trim()) onSetCategory(next.trim());
         }}
         className="w-full text-left px-2 py-1 rounded text-xs hover:bg-muted opacity-70"
       >
-        + New category…
+        {t("newCategory")}
       </button>
       <div className="my-1 border-t border-border" />
       <button
         onClick={() => {
-          const next = window.prompt("Rename feed", feed.title);
+          const next = window.prompt(t("renameFeedPrompt"), feed.title);
           if (next && next.trim()) onRenameFeed(next.trim());
         }}
         className="w-full text-left px-2 py-1 rounded text-xs hover:bg-muted"
       >
-        Rename feed…
+        {t("renameFeed")}
       </button>
       <button
         onClick={() => {
-          if (window.confirm(`Remove "${feed.title}"?`)) onRemoveFeed();
+          if (window.confirm(t("removeFeedConfirm", { title: feed.title }))) onRemoveFeed();
         }}
         className="w-full text-left px-2 py-1 rounded text-xs text-red-500 hover:bg-red-500/10"
       >
-        Remove feed
+        {t("removeFeed")}
       </button>
     </div>
   );
@@ -2079,6 +2048,7 @@ function AccountBar({
   user: { name?: string | null; image?: string | null } | undefined;
   syncStatus: SyncStatus;
 }) {
+  const t = useTranslations("Reader");
   return (
     <div className="px-4 py-2 border-b border-border flex items-center gap-2 min-h-[3rem]">
       {authStatus === "authenticated" ? (
@@ -2094,16 +2064,16 @@ function AccountBar({
           )}
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium truncate">
-              {user?.name || "Signed in"}
+              {user?.name || t("signedIn")}
             </div>
             <div className="text-[10px] opacity-60 truncate">
-              {syncLabel(syncStatus)}
+              {syncLabel(syncStatus, t)}
             </div>
           </div>
           <button
             onClick={() => signOut()}
             className="text-xs rounded px-2 py-1 hover:bg-background"
-            title="Sign out"
+            title={t("signOut")}
           >
             ⎋
           </button>
@@ -2118,35 +2088,37 @@ function AccountBar({
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
             <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
           </svg>
-          Sign in with GitHub to sync
+          {t("signInWithGitHub")}
         </button>
       )}
     </div>
   );
 }
 
-function syncLabel(s: SyncStatus): string {
+type ReaderT = ReturnType<typeof useTranslations<"Reader">>;
+
+function syncLabel(s: SyncStatus, t: ReaderT): string {
   switch (s.state) {
     case "off":
-      return "Local only";
+      return t("syncLocal");
     case "pulling":
-      return "Pulling…";
+      return t("syncPulling");
     case "syncing":
-      return "Syncing…";
+      return t("syncSyncing");
     case "idle":
       return s.updatedAt
-        ? `Synced ${formatRelative(s.updatedAt)}`
-        : "Synced";
+        ? t("syncIdleAt", { time: formatRelative(s.updatedAt, t) })
+        : t("syncIdle");
     case "error":
-      return `Sync error: ${s.error}`;
+      return t("syncError", { error: s.error });
   }
 }
 
-function formatRelative(ts: number): string {
+function formatRelative(ts: number, t: ReaderT): string {
   const diff = Date.now() - ts;
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 60_000) return t("justNow");
+  if (diff < 3_600_000) return t("minutesAgo", { n: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t("hoursAgo", { n: Math.floor(diff / 3_600_000) });
   return new Date(ts).toLocaleDateString();
 }
 
@@ -2191,15 +2163,16 @@ function MobileReader({
   extractError: string | null;
   onExtract: () => void;
 }) {
+  const t = useTranslations("Reader");
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
         <button
           onClick={onClose}
           className="text-sm rounded px-2 py-1 hover:bg-muted"
-          aria-label="Back"
+          aria-label={t("back")}
         >
-          ← Back
+          ← {t("back")}
         </button>
         <a
           href={article.link}
@@ -2207,13 +2180,13 @@ function MobileReader({
           rel="noopener noreferrer"
           className="ml-auto text-xs rounded border border-border px-2 py-1"
         >
-          Open ↗
+          {t("open")} ↗
         </a>
         <button
           onClick={onExtract}
           disabled={extracting || !article.link}
           className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 disabled:opacity-30"
-          title={fullHtml ? "Reload full article" : "Load full article"}
+          title={fullHtml ? t("reloadFullArticle") : t("loadFullArticle")}
         >
           {extracting ? "…" : "📖"}
         </button>
@@ -2234,7 +2207,7 @@ function MobileReader({
           {article.publishedAt && (
             <>
               <span>·</span>
-              <span>{formatDate(article.publishedAt)}</span>
+              <span>{formatDate(article.publishedAt, t)}</span>
             </>
           )}
         </div>
@@ -2247,7 +2220,7 @@ function MobileReader({
         {extracting && !fullHtml && (
           <div className="mb-3 flex items-center gap-2 text-sm rounded-md border border-border bg-muted/50 px-3 py-2">
             <Spinner />
-            <span className="opacity-80">Loading full article…</span>
+            <span className="opacity-80">{t("loadingFullArticleTitle")}</span>
           </div>
         )}
         {summary && (
@@ -2261,7 +2234,7 @@ function MobileReader({
           ) : article.contentHtml ? (
             <div dangerouslySetInnerHTML={{ __html: article.contentHtml }} />
           ) : (
-            <p className="opacity-60 text-sm">No content provided.</p>
+            <p className="opacity-60 text-sm">{t("noContentMobile")}</p>
           )}
         </div>
       </div>
@@ -2269,18 +2242,17 @@ function MobileReader({
   );
 }
 
-function formatDate(ts: number): string {
+function formatDate(ts: number, t: ReaderT): string {
   const now = Date.now();
   const diff = now - ts;
   const min = 60_000;
   const hour = 60 * min;
   const day = 24 * hour;
   const week = 7 * day;
-  if (diff < 0) return "just now";
-  if (diff < min) return "just now";
-  if (diff < hour) return `${Math.floor(diff / min)}m ago`;
-  if (diff < day) return `${Math.floor(diff / hour)}h ago`;
-  if (diff < week) return `${Math.floor(diff / day)}d ago`;
+  if (diff < min) return t("justNow");
+  if (diff < hour) return t("minutesAgo", { n: Math.floor(diff / min) });
+  if (diff < day) return t("hoursAgo", { n: Math.floor(diff / hour) });
+  if (diff < week) return t("daysAgo", { n: Math.floor(diff / day) });
   const d = new Date(ts);
   const sameYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleDateString(undefined, {

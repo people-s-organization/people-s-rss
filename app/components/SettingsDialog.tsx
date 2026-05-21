@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
+import { useTranslations, useLocale } from "next-intl";
+import { useRouter, usePathname } from "next/navigation";
 import type { AIConfig, AIStyle, Feed } from "@/app/lib/types";
 import { defaultEndpoint, detectStyle } from "@/app/lib/aiProviders";
 
@@ -61,6 +63,17 @@ function SettingsDialogBody({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const keyAvailable = hasAIKey || apiKeyDraft.trim().length > 0;
+  const t = useTranslations("Settings");
+  const tReader = useTranslations("Reader");
+  const locale = useLocale();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  function switchLocale(next: string) {
+    if (next === locale) return;
+    const stripped = pathname.replace(/^\/(zh|en)(?=\/|$)/, "") || "/";
+    router.push(`/${next}${stripped === "/" ? "" : stripped}`);
+  }
 
   function handleStyleChange(next: AIStyle) {
     setStyle(next);
@@ -82,11 +95,11 @@ function SettingsDialogBody({
 
   async function handleFetchModels() {
     if (!endpoint.trim()) {
-      setModelsError("Fill endpoint first.");
+      setModelsError(t("fillEndpointFirst"));
       return;
     }
     if (!keyAvailable) {
-      setModelsError("Enter API key first.");
+      setModelsError(t("enterApiKeyFirst"));
       return;
     }
     setModelsLoading(true);
@@ -113,7 +126,7 @@ function SettingsDialogBody({
         setModel(list[0].id);
       }
     } catch (err) {
-      setModelsError(err instanceof Error ? err.message : "Fetch failed");
+      setModelsError(err instanceof Error ? err.message : t("saveFailedDefault"));
     } finally {
       setModelsLoading(false);
     }
@@ -128,7 +141,7 @@ function SettingsDialogBody({
       await onAddFeed(url);
       setNewUrl("");
     } catch (err) {
-      setAddError(err instanceof Error ? err.message : "Failed to add feed");
+      setAddError(err instanceof Error ? err.message : tReader("loadFailed", { error: "" }));
     } finally {
       setAdding(false);
     }
@@ -137,7 +150,7 @@ function SettingsDialogBody({
   async function handleSaveAI() {
     if (!endpoint.trim() || !model.trim()) return;
     if (!keyAvailable) {
-      setSaveError("Enter API key first.");
+      setSaveError(t("enterApiKeyFirst"));
       return;
     }
     setSaving(true);
@@ -155,7 +168,7 @@ function SettingsDialogBody({
       setApiKeyDraft("");
       onClose();
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Save failed");
+      setSaveError(err instanceof Error ? err.message : t("saveFailedDefault"));
     } finally {
       setSaving(false);
     }
@@ -173,7 +186,7 @@ function SettingsDialogBody({
       setModel("");
       setModels([]);
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "Clear failed");
+      setSaveError(err instanceof Error ? err.message : t("clearFailedDefault"));
     } finally {
       setSaving(false);
     }
@@ -189,14 +202,32 @@ function SettingsDialogBody({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h2 className="text-lg font-semibold">Settings</h2>
-          <button
-            onClick={onClose}
-            className="text-sm rounded px-2 py-1 hover:bg-muted"
-            aria-label="Close"
-          >
-            ✕
-          </button>
+          <h2 className="text-lg font-semibold">{t("title")}</h2>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center rounded border border-border overflow-hidden text-[11px]">
+              <button
+                onClick={() => switchLocale("zh")}
+                className={`px-2 py-1 ${locale === "zh" ? "bg-foreground text-background" : "hover:bg-muted"}`}
+                aria-label="中文"
+              >
+                中
+              </button>
+              <button
+                onClick={() => switchLocale("en")}
+                className={`px-2 py-1 ${locale === "en" ? "bg-foreground text-background" : "hover:bg-muted"}`}
+                aria-label="English"
+              >
+                EN
+              </button>
+            </div>
+            <button
+              onClick={onClose}
+              className="text-sm rounded px-2 py-1 hover:bg-muted"
+              aria-label={t("close")}
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         <AccountSection />
@@ -206,13 +237,13 @@ function SettingsDialogBody({
             onClick={() => setTab("feeds")}
             className={`px-4 py-2 text-sm font-medium ${tab === "feeds" ? "bg-background border-b-2 border-accent" : "opacity-70 hover:opacity-100"}`}
           >
-            Feeds
+            {t("feeds")}
           </button>
           <button
             onClick={() => setTab("ai")}
             className={`px-4 py-2 text-sm font-medium ${tab === "ai" ? "bg-background border-b-2 border-accent" : "opacity-70 hover:opacity-100"}`}
           >
-            AI Summary
+            {t("ai")}
           </button>
         </div>
 
@@ -221,7 +252,7 @@ function SettingsDialogBody({
             <div className="space-y-4">
               <div>
                 <label className="text-sm font-medium block mb-1">
-                  Add feed by URL
+                  {t("addFeedLabel")}
                 </label>
                 <div className="flex gap-2">
                   <input
@@ -230,7 +261,7 @@ function SettingsDialogBody({
                     onKeyDown={(e) => {
                       if (e.key === "Enter") handleAdd();
                     }}
-                    placeholder="https://example.com/feed.xml"
+                    placeholder={t("addFeedPlaceholder")}
                     className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                   />
                   <button
@@ -238,7 +269,7 @@ function SettingsDialogBody({
                     disabled={adding || !newUrl.trim()}
                     className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                   >
-                    {adding ? "Adding…" : "Add"}
+                    {adding ? t("adding") : t("add")}
                   </button>
                 </div>
                 {addError && (
@@ -260,22 +291,14 @@ function SettingsDialogBody({
             </div>
           ) : !isSignedIn ? (
             <div className="space-y-3">
-              <p className="text-sm opacity-80">
-                Sign in with GitHub to configure AI summary. Your API key is
-                stored encrypted on the server and never sent back to your
-                browser.
-              </p>
+              <p className="text-sm opacity-80">{t("signInToConfigureAI")}</p>
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-sm opacity-70">
-                Bring your own AI endpoint. Your API key is stored encrypted on
-                the server, scoped to your account, and never returned to the
-                browser.
-              </p>
+              <p className="text-sm opacity-70">{t("aiHelpText")}</p>
 
               <div>
-                <label className="text-sm font-medium block mb-1">API style</label>
+                <label className="text-sm font-medium block mb-1">{t("apiStyle")}</label>
                 <div className="flex gap-2">
                   <StyleButton
                     active={style === "openai"}
@@ -293,7 +316,7 @@ function SettingsDialogBody({
               </div>
 
               <div>
-                <label className="text-sm font-medium block mb-1">Endpoint base URL</label>
+                <label className="text-sm font-medium block mb-1">{t("endpointLabel")}</label>
                 <input
                   value={endpoint}
                   onChange={(e) => handleEndpointChange(e.target.value)}
@@ -301,18 +324,16 @@ function SettingsDialogBody({
                   className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                 />
                 <p className="text-xs opacity-60 mt-1">
-                  We append{" "}
-                  <code>{style === "anthropic" ? "/messages" : "/chat/completions"}</code>{" "}
-                  for inference and <code>/models</code> for the list.
+                  {style === "anthropic" ? t("endpointHelpAnthropic") : t("endpointHelpOpenAI")}
                 </p>
               </div>
 
               <div>
                 <label className="text-sm font-medium block mb-1">
-                  API key
+                  {t("apiKeyLabel")}
                   {hasAIKey && (
                     <span className="ml-2 text-xs opacity-70 font-normal">
-                      ✓ stored on server
+                      {t("apiKeyStored")}
                     </span>
                   )}
                 </label>
@@ -322,7 +343,7 @@ function SettingsDialogBody({
                   onChange={(e) => setApiKeyDraft(e.target.value)}
                   placeholder={
                     hasAIKey
-                      ? "•••• stored — type to replace"
+                      ? t("apiKeyPlaceholderStored")
                       : style === "anthropic"
                         ? "sk-ant-…"
                         : "sk-…"
@@ -330,14 +351,11 @@ function SettingsDialogBody({
                   autoComplete="off"
                   className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                 />
-                <p className="text-xs opacity-60 mt-1">
-                  Leave blank to keep the existing key. The key never leaves
-                  the server after being saved.
-                </p>
+                <p className="text-xs opacity-60 mt-1">{t("apiKeyHelp")}</p>
               </div>
 
               <div>
-                <label className="text-sm font-medium block mb-1">Model</label>
+                <label className="text-sm font-medium block mb-1">{t("model")}</label>
                 <div className="flex items-center gap-2">
                   <select
                     value={model}
@@ -346,12 +364,10 @@ function SettingsDialogBody({
                     className="flex-1 rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60 disabled:opacity-60"
                   >
                     <option value="">
-                      {models.length === 0
-                        ? "Click Fetch to load models…"
-                        : "Select a model…"}
+                      {models.length === 0 ? t("fetchToLoadModels") : t("selectModel")}
                     </option>
                     {!models.find((m) => m.id === model) && model && (
-                      <option value={model}>{model} (saved)</option>
+                      <option value={model}>{t("modelSaved", { id: model })}</option>
                     )}
                     {models.map((m) => (
                       <option key={m.id} value={m.id}>
@@ -363,9 +379,9 @@ function SettingsDialogBody({
                     onClick={handleFetchModels}
                     disabled={modelsLoading}
                     className="text-xs rounded border border-border px-3 py-1.5 hover:bg-muted disabled:opacity-50 shrink-0"
-                    title="Fetch model list from endpoint"
+                    title={t("fetchModels")}
                   >
-                    {modelsLoading ? "…" : "↻ Fetch"}
+                    {modelsLoading ? "…" : t("fetchModels")}
                   </button>
                 </div>
                 {modelsError && (
@@ -373,7 +389,7 @@ function SettingsDialogBody({
                 )}
                 {models.length > 0 && !modelsError && (
                   <p className="text-xs opacity-60 mt-1">
-                    {models.length} models loaded
+                    {t("modelsLoaded", { n: models.length })}
                   </p>
                 )}
               </div>
@@ -389,7 +405,7 @@ function SettingsDialogBody({
                   }
                   className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  {saving ? "Saving…" : "Save & close"}
+                  {saving ? t("saving") : t("saveAndClose")}
                 </button>
                 {(aiConfig || hasAIKey) && (
                   <button
@@ -397,24 +413,18 @@ function SettingsDialogBody({
                     disabled={saving}
                     className="rounded border border-border px-3 py-1.5 text-sm disabled:opacity-50"
                   >
-                    Clear
+                    {t("clear")}
                   </button>
                 )}
                 {saveError && (
                   <span className="text-xs text-red-500">{saveError}</span>
                 )}
                 {!saveError && !endpoint.trim() ? (
-                  <span className="text-xs opacity-60">
-                    Fill endpoint first.
-                  </span>
+                  <span className="text-xs opacity-60">{t("fillEndpointFirst")}</span>
                 ) : !saveError && !keyAvailable ? (
-                  <span className="text-xs opacity-60">
-                    Enter API key first.
-                  </span>
+                  <span className="text-xs opacity-60">{t("enterApiKeyFirst")}</span>
                 ) : !saveError && !model.trim() ? (
-                  <span className="text-xs opacity-60">
-                    Pick a model — click ↻ Fetch above.
-                  </span>
+                  <span className="text-xs opacity-60">{t("pickAModel")}</span>
                 ) : null}
               </div>
             </div>
@@ -432,6 +442,7 @@ function CategoriesPanel({
   feeds: Feed[];
   onSetCategory: (feedId: string, category: string) => void;
 }) {
+  const t = useTranslations("Settings");
   const categories = Array.from(
     feeds.reduce((map, f) => {
       const c = f.category;
@@ -442,7 +453,7 @@ function CategoriesPanel({
   ).sort((a, b) => a[0].localeCompare(b[0]));
 
   function renameCategory(oldName: string) {
-    const next = window.prompt(`Rename category "${oldName}" to:`, oldName);
+    const next = window.prompt(t("renameCategoryPrompt", { name: oldName }), oldName);
     if (!next) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === oldName) return;
@@ -452,49 +463,33 @@ function CategoriesPanel({
   }
 
   function deleteCategory(name: string) {
-    if (
-      !window.confirm(
-        `Delete category "${name}"? Feeds in it become Uncategorized.`,
-      )
-    )
-      return;
+    if (!window.confirm(t("deleteCategoryConfirm", { name }))) return;
     for (const f of feeds) {
       if (f.category === name) onSetCategory(f.id, "");
     }
   }
 
   function addCategoryFromPrompt() {
-    const name = window.prompt(
-      "New category name. Pick a feed first from the list below to assign it.",
-    );
+    const name = window.prompt(t("newCategoryPrompt"));
     if (!name) return;
-    // We don't have a target feed here; user will assign via the list below.
-    // Quietly creating an empty category isn't useful, so show a hint.
-    window.alert(
-      `Created "${name.trim()}". Use the Category dropdown on a feed row below to assign it.`,
-    );
-    // Persist by hijacking one feed temporarily? No — categories live on feeds, so
-    // an unassigned category isn't a thing. The hint is the right UX here.
+    window.alert(t("createdHint", { name: name.trim() }));
   }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-sm font-medium">
-          Categories ({categories.length})
+          {t("categoriesHeading", { n: categories.length })}
         </h3>
         <button
           onClick={addCategoryFromPrompt}
           className="text-xs rounded border border-border px-2 py-1 hover:bg-muted"
         >
-          + New
+          {t("addCategoryButton")}
         </button>
       </div>
       {categories.length === 0 ? (
-        <p className="text-xs opacity-60">
-          No categories yet. Assign one to a feed below or right-click a feed in
-          the sidebar.
-        </p>
+        <p className="text-xs opacity-60">{t("noCategories")}</p>
       ) : (
         <div className="flex flex-wrap gap-2">
           {categories.map(([name, count]) => (
@@ -508,14 +503,14 @@ function CategoriesPanel({
               <button
                 onClick={() => renameCategory(name)}
                 className="ml-1 px-1.5 py-0.5 rounded hover:bg-background"
-                title="Rename"
+                title={t("renameTitle")}
               >
                 ✎
               </button>
               <button
                 onClick={() => deleteCategory(name)}
                 className="px-1.5 py-0.5 rounded hover:bg-red-500/10 text-red-500"
-                title="Delete category"
+                title={t("deleteCategoryTitle")}
               >
                 ✕
               </button>
@@ -553,16 +548,15 @@ function FeedListByCategory({
     if (b === "" && a !== "") return -1;
     return a.localeCompare(b);
   });
+  const t = useTranslations("Settings");
 
   return (
     <div>
       <h3 className="text-sm font-medium mb-2">
-        Your feeds ({feeds.length})
+        {t("yourFeedsHeading", { n: feeds.length })}
       </h3>
       {feeds.length === 0 ? (
-        <p className="text-sm opacity-60">
-          No feeds yet. Paste an RSS or Atom URL above.
-        </p>
+        <p className="text-sm opacity-60">{t("noFeedsYet")}</p>
       ) : (
         <div className="space-y-4">
           {groupOrder.map((cat) => {
@@ -570,7 +564,7 @@ function FeedListByCategory({
             return (
               <div key={cat || "__uncat__"}>
                 <div className="text-[10px] uppercase tracking-wider opacity-60 mb-1.5 px-1">
-                  {cat || "Uncategorized"}
+                  {cat || t("uncategorized")}
                 </div>
                 <ul className="space-y-1.5">
                   {groupFeeds.map((f) => (
@@ -592,7 +586,7 @@ function FeedListByCategory({
                           onChange={(e) => {
                             const v = e.target.value;
                             if (v === "__new__") {
-                              const next = window.prompt("New category name");
+                              const next = window.prompt(t("newCategoryInline"));
                               if (next && next.trim())
                                 onSetCategory(f.id, next.trim());
                               return;
@@ -600,20 +594,20 @@ function FeedListByCategory({
                             onSetCategory(f.id, v);
                           }}
                           className="text-xs rounded border border-border bg-background px-2 py-1 max-w-[10rem]"
-                          title="Category"
+                          title={t("categoryDropdownTitle")}
                         >
-                          <option value="">Uncategorized</option>
+                          <option value="">{t("uncategorized")}</option>
                           {allCategories.map((c) => (
                             <option key={c} value={c}>
                               {c}
                             </option>
                           ))}
-                          <option value="__new__">+ New category…</option>
+                          <option value="__new__">{t("newCategoryOption")}</option>
                         </select>
                         <button
                           onClick={() => onRemoveFeed(f.id)}
                           className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
-                          title="Remove feed"
+                          title={t("removeFeedTitle")}
                         >
                           ✕
                         </button>
@@ -640,6 +634,7 @@ function FeedListByCategory({
 
 function AccountSection() {
   const { data: session, status } = useSession();
+  const t = useTranslations("Settings");
   return (
     <div className="px-5 py-3 border-b border-border bg-muted/30">
       {status === "loading" ? (
@@ -657,25 +652,20 @@ function AccountSection() {
           )}
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">
-              {session?.user?.name || "Signed in"}
+              {session?.user?.name || t("signIn")}
             </div>
-            <div className="text-xs opacity-60">
-              Multi-device sync active
-            </div>
+            <div className="text-xs opacity-60">{t("multiDeviceSyncActive")}</div>
           </div>
           <button
             onClick={() => signOut()}
             className="text-xs rounded border border-border px-2 py-1 hover:bg-background"
           >
-            Sign out
+            {t("signOut")}
           </button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-3">
-          <div className="text-xs opacity-70">
-            Sign in with GitHub to sync feeds, AI config, and read state across
-            devices.
-          </div>
+          <div className="text-xs opacity-70">{t("signInSyncDesc")}</div>
           <button
             onClick={() => signIn("github")}
             className="text-xs rounded bg-foreground text-background px-3 py-1.5 hover:opacity-90 shrink-0 flex items-center gap-1.5"
@@ -683,7 +673,7 @@ function AccountSection() {
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
               <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
             </svg>
-            Sign in
+            {t("signIn")}
           </button>
         </div>
       )}
