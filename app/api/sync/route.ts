@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { getRedis, userKey } from "@/app/lib/redis";
+import { setAIKey } from "@/app/lib/aiKeyStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +14,22 @@ type SyncBlob = {
   ai?: unknown;
   updatedAt: number;
 };
+
+function sanitizeAI(input: unknown): unknown {
+  if (!input || typeof input !== "object") return input;
+  const src = input as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of ["endpoint", "model", "style"]) {
+    if (k in src) out[k] = src[k];
+  }
+  return out;
+}
+
+function extractLegacyApiKey(input: unknown): string | null {
+  if (!input || typeof input !== "object") return null;
+  const v = (input as Record<string, unknown>).apiKey;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
 
 export async function GET() {
   const session = await auth();
@@ -27,6 +44,22 @@ export async function GET() {
       return NextResponse.json({ blob: null });
     }
     const blob = JSON.parse(raw) as SyncBlob;
+    const legacyKey = extractLegacyApiKey(blob.ai);
+    if (legacyKey) {
+      try {
+        await setAIKey(githubId, legacyKey);
+      } catch {
+        // If encryption isn't configured we still want to strip the plaintext
+        // from the blob to stop leaking it on every read.
+      }
+      const cleaned: SyncBlob = {
+        ...blob,
+        ai: sanitizeAI(blob.ai),
+        updatedAt: blob.updatedAt,
+      };
+      await redis.set(userKey(githubId), JSON.stringify(cleaned));
+      return NextResponse.json({ blob: cleaned });
+    }
     return NextResponse.json({ blob });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sync read failed";
@@ -53,7 +86,7 @@ export async function PUT(request: Request) {
   const blob: SyncBlob = {
     feeds: (body as Record<string, unknown>).feeds,
     read: (body as Record<string, unknown>).read,
-    ai: (body as Record<string, unknown>).ai,
+    ai: sanitizeAI((body as Record<string, unknown>).ai),
     updatedAt: Date.now(),
   };
 

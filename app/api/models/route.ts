@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
+import { getAIKey } from "@/app/lib/aiKeyStore";
+import { auth } from "@/auth";
 import type { AIStyle } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -14,6 +16,12 @@ type Body = {
 const FETCH_TIMEOUT_MS = 20_000;
 
 export async function POST(request: Request) {
+  const session = await auth();
+  const githubId = session?.user?.githubId;
+  if (!githubId) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
   let body: Body;
   try {
     body = (await request.json()) as Body;
@@ -21,12 +29,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
   const endpoint = body.endpoint?.trim();
-  const apiKey = body.apiKey?.trim();
+  const bodyApiKey = body.apiKey?.trim();
   const style: AIStyle = body.style === "anthropic" ? "anthropic" : "openai";
-  if (!endpoint || !apiKey) {
+  if (!endpoint) {
     return NextResponse.json(
-      { error: "endpoint and apiKey are required" },
+      { error: "endpoint is required" },
       { status: 400 },
+    );
+  }
+  let apiKey = bodyApiKey ?? "";
+  if (!apiKey) {
+    try {
+      apiKey = (await getAIKey(githubId)) ?? "";
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Key lookup failed";
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
+  }
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "apiKey is required (provide one or save in Settings)" },
+      { status: 412 },
     );
   }
 

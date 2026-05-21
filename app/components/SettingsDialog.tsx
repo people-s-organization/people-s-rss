@@ -15,7 +15,11 @@ type Props = {
   onRenameFeed: (id: string, title: string) => void;
   onSetCategory: (id: string, category: string) => void;
   aiConfig: AIConfig | null;
+  hasAIKey: boolean;
+  isSignedIn: boolean;
   onSaveAI: (cfg: AIConfig | null) => void;
+  onSetAIKey: (apiKey: string) => Promise<void>;
+  onClearAIKey: () => Promise<void>;
 };
 
 export function SettingsDialog(props: Props) {
@@ -32,7 +36,11 @@ function SettingsDialogBody({
   onRenameFeed,
   onSetCategory,
   aiConfig,
+  hasAIKey,
+  isSignedIn,
   onSaveAI,
+  onSetAIKey,
+  onClearAIKey,
 }: Props) {
   const [tab, setTab] = useState<"feeds" | "ai">(initialTab ?? "feeds");
   const [newUrl, setNewUrl] = useState("");
@@ -45,11 +53,14 @@ function SettingsDialogBody({
   const [endpoint, setEndpoint] = useState(
     aiConfig?.endpoint ?? defaultEndpoint(aiConfig?.style ?? "openai"),
   );
-  const [apiKey, setApiKey] = useState(aiConfig?.apiKey ?? "");
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [model, setModel] = useState(aiConfig?.model ?? "");
   const [models, setModels] = useState<{ id: string; label?: string }[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const keyAvailable = hasAIKey || apiKeyDraft.trim().length > 0;
 
   function handleStyleChange(next: AIStyle) {
     setStyle(next);
@@ -70,20 +81,25 @@ function SettingsDialogBody({
   }
 
   async function handleFetchModels() {
-    if (!endpoint.trim() || !apiKey.trim()) {
-      setModelsError("Fill endpoint and API key first.");
+    if (!endpoint.trim()) {
+      setModelsError("Fill endpoint first.");
+      return;
+    }
+    if (!keyAvailable) {
+      setModelsError("Enter API key first.");
       return;
     }
     setModelsLoading(true);
     setModelsError(null);
     try {
+      const draft = apiKeyDraft.trim();
       const res = await fetch("/api/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endpoint: endpoint.trim(),
-          apiKey: apiKey.trim(),
           style,
+          ...(draft ? { apiKey: draft } : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -118,15 +134,49 @@ function SettingsDialogBody({
     }
   }
 
-  function handleSaveAI() {
-    if (!endpoint.trim() || !apiKey.trim() || !model.trim()) return;
-    onSaveAI({
-      endpoint: endpoint.trim(),
-      apiKey: apiKey.trim(),
-      model: model.trim(),
-      style,
-    });
-    onClose();
+  async function handleSaveAI() {
+    if (!endpoint.trim() || !model.trim()) return;
+    if (!keyAvailable) {
+      setSaveError("Enter API key first.");
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const draft = apiKeyDraft.trim();
+      if (draft) {
+        await onSetAIKey(draft);
+      }
+      onSaveAI({
+        endpoint: endpoint.trim(),
+        model: model.trim(),
+        style,
+      });
+      setApiKeyDraft("");
+      onClose();
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleClearAI() {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await onClearAIKey();
+      onSaveAI(null);
+      setStyle("openai");
+      setEndpoint(defaultEndpoint("openai"));
+      setApiKeyDraft("");
+      setModel("");
+      setModels([]);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Clear failed");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -208,12 +258,20 @@ function SettingsDialogBody({
                 onSetCategory={onSetCategory}
               />
             </div>
+          ) : !isSignedIn ? (
+            <div className="space-y-3">
+              <p className="text-sm opacity-80">
+                Sign in with GitHub to configure AI summary. Your API key is
+                stored encrypted on the server and never sent back to your
+                browser.
+              </p>
+            </div>
           ) : (
             <div className="space-y-4">
               <p className="text-sm opacity-70">
-                Bring your own AI endpoint. Your key stays in your browser and
-                is only forwarded through this app when you click
-                &ldquo;Summarize&rdquo;.
+                Bring your own AI endpoint. Your API key is stored encrypted on
+                the server, scoped to your account, and never returned to the
+                browser.
               </p>
 
               <div>
@@ -250,14 +308,32 @@ function SettingsDialogBody({
               </div>
 
               <div>
-                <label className="text-sm font-medium block mb-1">API key</label>
+                <label className="text-sm font-medium block mb-1">
+                  API key
+                  {hasAIKey && (
+                    <span className="ml-2 text-xs opacity-70 font-normal">
+                      ✓ stored on server
+                    </span>
+                  )}
+                </label>
                 <input
                   type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={style === "anthropic" ? "sk-ant-…" : "sk-…"}
+                  value={apiKeyDraft}
+                  onChange={(e) => setApiKeyDraft(e.target.value)}
+                  placeholder={
+                    hasAIKey
+                      ? "•••• stored — type to replace"
+                      : style === "anthropic"
+                        ? "sk-ant-…"
+                        : "sk-…"
+                  }
+                  autoComplete="off"
                   className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
                 />
+                <p className="text-xs opacity-60 mt-1">
+                  Leave blank to keep the existing key. The key never leaves
+                  the server after being saved.
+                </p>
               </div>
 
               <div>
@@ -302,36 +378,40 @@ function SettingsDialogBody({
                 )}
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <button
                   onClick={handleSaveAI}
                   disabled={
-                    !endpoint.trim() || !apiKey.trim() || !model.trim()
+                    saving ||
+                    !endpoint.trim() ||
+                    !model.trim() ||
+                    !keyAvailable
                   }
                   className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                 >
-                  Save &amp; close
+                  {saving ? "Saving…" : "Save & close"}
                 </button>
-                {aiConfig && (
+                {(aiConfig || hasAIKey) && (
                   <button
-                    onClick={() => {
-                      onSaveAI(null);
-                      setStyle("openai");
-                      setEndpoint(defaultEndpoint("openai"));
-                      setApiKey("");
-                      setModel("");
-                      setModels([]);
-                    }}
-                    className="rounded border border-border px-3 py-1.5 text-sm"
+                    onClick={handleClearAI}
+                    disabled={saving}
+                    className="rounded border border-border px-3 py-1.5 text-sm disabled:opacity-50"
                   >
                     Clear
                   </button>
                 )}
-                {!endpoint.trim() || !apiKey.trim() ? (
+                {saveError && (
+                  <span className="text-xs text-red-500">{saveError}</span>
+                )}
+                {!saveError && !endpoint.trim() ? (
                   <span className="text-xs opacity-60">
-                    Fill endpoint and key first.
+                    Fill endpoint first.
                   </span>
-                ) : !model.trim() ? (
+                ) : !saveError && !keyAvailable ? (
+                  <span className="text-xs opacity-60">
+                    Enter API key first.
+                  </span>
+                ) : !saveError && !model.trim() ? (
                   <span className="text-xs opacity-60">
                     Pick a model — click ↻ Fetch above.
                   </span>

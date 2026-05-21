@@ -118,6 +118,7 @@ export function Reader() {
   const [feedsPanelCollapsed, setFeedsPanelCollapsed] = useState(false);
   const [articlesPanelCollapsed, setArticlesPanelCollapsed] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
+  const [hasAIKey, setHasAIKey] = useState(false);
   const [locale] = useState<UILocale>(() => {
     if (typeof navigator === "undefined") return "zh";
     const lang = (navigator.language || "").toLowerCase();
@@ -311,6 +312,53 @@ export function Reader() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [feeds, readSet, aiConfig]);
+
+  // Track whether the server has a stored AI key for this user
+  useEffect(() => {
+    if (authStatus !== "authenticated") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset on sign-out
+      setHasAIKey(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ai-key");
+        if (!res.ok) return;
+        const data = (await res.json()) as { hasKey?: boolean };
+        if (!cancelled) setHasAIKey(!!data.hasKey);
+      } catch {
+        // silently ignore — the user will get a clearer error if they try to summarize
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authStatus]);
+
+  async function handleSetAIKey(apiKey: string) {
+    const res = await fetch("/api/ai-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+    };
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+    setHasAIKey(true);
+  }
+
+  async function handleClearAIKey() {
+    const res = await fetch("/api/ai-key", { method: "DELETE" });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+    };
+    if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+    setHasAIKey(false);
+  }
 
   const autoRefreshedRef = useRef<Set<string>>(new Set());
   const articleListRef = useRef<HTMLOListElement>(null);
@@ -682,7 +730,7 @@ export function Reader() {
   }
 
   async function handleSummarize(article: Article) {
-    if (!aiConfig) {
+    if (authStatus !== "authenticated" || !aiConfig || !hasAIKey) {
       setSummaryError(null);
       setSettingsInitialTab("ai");
       setSettingsOpen(true);
@@ -734,7 +782,6 @@ export function Reader() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           endpoint: aiConfig.endpoint,
-          apiKey: aiConfig.apiKey,
           model: aiConfig.model,
           style: aiConfig.style,
           title: article.title,
@@ -1231,7 +1278,11 @@ export function Reader() {
         onRenameFeed={handleRenameFeed}
         onSetCategory={handleSetCategory}
         aiConfig={aiConfig}
+        hasAIKey={hasAIKey}
+        isSignedIn={authStatus === "authenticated"}
         onSaveAI={handleSaveAI}
+        onSetAIKey={handleSetAIKey}
+        onClearAIKey={handleClearAIKey}
       />
 
       {mobileFeedPickerOpen && (

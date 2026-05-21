@@ -99,19 +99,22 @@ export function loadAIConfig(): AIConfig | null {
     if (
       parsed &&
       typeof parsed.endpoint === "string" &&
-      typeof parsed.apiKey === "string" &&
       typeof parsed.model === "string"
     ) {
       const style =
         parsed.style === "anthropic" || parsed.style === "openai"
           ? parsed.style
           : "openai";
-      return {
+      const cfg: AIConfig = {
         endpoint: parsed.endpoint,
-        apiKey: parsed.apiKey,
         model: parsed.model,
         style,
-      } as AIConfig;
+      };
+      // Scrub any legacy apiKey field left in localStorage from older builds.
+      if (typeof parsed.apiKey === "string") {
+        window.localStorage.setItem(AI_KEY, JSON.stringify(cfg));
+      }
+      return cfg;
     }
     return null;
   } catch {
@@ -125,7 +128,12 @@ export function saveAIConfig(cfg: AIConfig | null) {
     window.localStorage.removeItem(AI_KEY);
     return;
   }
-  window.localStorage.setItem(AI_KEY, JSON.stringify(cfg));
+  const stripped: AIConfig = {
+    endpoint: cfg.endpoint,
+    model: cfg.model,
+    style: cfg.style,
+  };
+  window.localStorage.setItem(AI_KEY, JSON.stringify(stripped));
 }
 
 export function loadRead(): Set<string> {

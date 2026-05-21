@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
+import { getAIKey } from "@/app/lib/aiKeyStore";
+import { auth } from "@/auth";
 import type { AIStyle } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -7,7 +9,6 @@ export const dynamic = "force-dynamic";
 
 type Body = {
   endpoint?: string;
-  apiKey?: string;
   model?: string;
   style?: AIStyle;
   title?: string;
@@ -20,6 +21,15 @@ const MAX_CONTENT = 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
 
 export async function POST(request: Request) {
+  const session = await auth();
+  const githubId = session?.user?.githubId;
+  if (!githubId) {
+    return NextResponse.json(
+      { error: "Sign in to use AI summary" },
+      { status: 401 },
+    );
+  }
+
   let body: Body;
   try {
     body = (await request.json()) as Body;
@@ -28,13 +38,25 @@ export async function POST(request: Request) {
   }
 
   const endpoint = body.endpoint?.trim();
-  const apiKey = body.apiKey?.trim();
   const model = body.model?.trim();
   const style: AIStyle = body.style === "anthropic" ? "anthropic" : "openai";
-  if (!endpoint || !apiKey || !model) {
+  if (!endpoint || !model) {
     return NextResponse.json(
-      { error: "endpoint, apiKey, and model are required" },
+      { error: "endpoint and model are required" },
       { status: 400 },
+    );
+  }
+  let apiKey: string | null;
+  try {
+    apiKey = await getAIKey(githubId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Key lookup failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: "AI key not set; open Settings to add one" },
+      { status: 412 },
     );
   }
 

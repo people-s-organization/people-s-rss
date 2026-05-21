@@ -24,7 +24,6 @@ export type AIStyle = "openai" | "anthropic";
 
 export type AIConfig = {
   endpoint: string;
-  apiKey: string;
   model: string;
   style: AIStyle;
 };
