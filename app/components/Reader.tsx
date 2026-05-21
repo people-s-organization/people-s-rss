@@ -767,6 +767,10 @@ export function Reader() {
     try {
       return JSON.parse(text) as T & { error?: string };
     } catch {
+      const isHtml = /<\s*(!doctype\s+html|html)\b/i.test(text);
+      if (isHtml) {
+        throw new Error("Server returned an HTML error page instead of JSON.");
+      }
       const preview = text.slice(0, 120).replace(/\s+/g, " ").trim();
       throw new Error(
         preview ? `Invalid server response: ${preview}` : "Invalid server response",
@@ -868,7 +872,7 @@ export function Reader() {
       </button>
 
       <section
-        className={`relative w-full shrink-0 border-r border-border flex flex-col min-w-0 transition-all ${
+        className={`relative w-full shrink-0 border-r border-border flex flex-col min-w-0 transition-[width,border-color] duration-200 ${
           articlesPanelCollapsed ? "md:w-0 md:overflow-hidden md:border-r-0" : "md:w-96"
         }`}
       >
@@ -1112,7 +1116,7 @@ export function Reader() {
         {articlesPanelCollapsed ? "⟩" : "⟨"}
       </button>
 
-      <main className="hidden md:flex flex-1 flex-col overflow-hidden">
+      <main className="hidden md:flex flex-1 min-w-0 flex-col overflow-hidden">
         {selectedArticle ? (
           <article
             key={selectedArticle.id}
@@ -1336,9 +1340,9 @@ function ArticleBody({
 
   const hasToc = toc.length >= 2;
   return (
-    <div className="flex justify-center items-stretch gap-6 xl:gap-10">
+    <div className="mx-auto flex w-full max-w-[1300px] items-start gap-6 px-6 sm:px-10">
       <div
-        className="prose-content px-6 sm:px-10 py-8 max-w-3xl flex-1 min-w-0"
+        className="prose-content w-full max-w-3xl min-w-0 py-8"
         ref={containerRef}
       >
         {html ? (
@@ -1353,8 +1357,8 @@ function ArticleBody({
         )}
       </div>
       {hasToc && (
-        <aside className="hidden xl:block w-44 shrink-0 self-stretch py-8 pr-4">
-          <div className="sticky top-1/2 -translate-y-1/2 max-h-[80dvh] overflow-y-auto">
+        <aside className="hidden xl:block w-52 shrink-0 py-8">
+          <div className="sticky top-24 max-h-[calc(100dvh-7rem)] overflow-y-auto">
             <div className="text-[10px] font-semibold uppercase tracking-wider opacity-60 mb-2">
               On this page
             </div>
