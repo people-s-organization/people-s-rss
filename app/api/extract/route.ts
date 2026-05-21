@@ -9,6 +9,7 @@ export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
+const JINA_READER_PREFIX = "https://r.jina.ai/http://";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -40,37 +41,23 @@ export async function GET(request: Request) {
       signal: controller.signal,
       redirect: "follow",
     });
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Upstream ${res.status}` },
-        { status: 502 },
-      );
-    }
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength > MAX_BYTES) {
-      return NextResponse.json({ error: "Page too large" }, { status: 413 });
-    }
-    const html = new TextDecoder("utf-8").decode(buf);
-
-    const dom = new JSDOM(html, { url: target.toString() });
-    const article = new Readability(dom.window.document).parse();
-    if (!article || !article.content) {
+    const extracted = await extractContent(res, target);
+    if (!extracted) {
       return NextResponse.json(
         { error: "Could not extract article body" },
         { status: 422 },
       );
     }
 
-    const absHtml = resolveUrls(article.content, target.toString());
-    const cleanHtml = sanitizeHtml(absHtml);
-    const text = stripHtml(absHtml);
+    const cleanHtml = sanitizeHtml(extracted.contentHtml);
+    const text = stripHtml(extracted.contentHtml);
     return NextResponse.json(
       {
-        title: article.title ?? undefined,
-        byline: article.byline ?? undefined,
-        siteName: article.siteName ?? undefined,
-        excerpt: article.excerpt ?? undefined,
-        length: article.length ?? text.length,
+        title: extracted.title,
+        byline: extracted.byline,
+        siteName: extracted.siteName,
+        excerpt: extracted.excerpt,
+        length: extracted.length ?? text.length,
         contentHtml: cleanHtml,
         contentText: text,
       },
@@ -86,6 +73,124 @@ export async function GET(request: Request) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+type Extracted = {
+  title?: string;
+  byline?: string;
+  siteName?: string;
+  excerpt?: string;
+  length?: number;
+  contentHtml: string;
+};
+
+async function extractContent(res: Response, target: URL): Promise<Extracted | null> {
+  if (res.ok) {
+    const parsed = await parseArticleFromHtml(res, target);
+    if (parsed) return parsed;
+  }
+  // Some websites block server-side fetches (often with 403/anti-bot). For
+  // those cases, fall back to a text extraction mirror so users can still read.
+  return extractViaJina(target);
+}
+
+async function parseArticleFromHtml(res: Response, target: URL): Promise<Extracted | null> {
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > MAX_BYTES) {
+    return null;
+  }
+  const html = new TextDecoder("utf-8").decode(buf);
+  const dom = new JSDOM(html, { url: target.toString() });
+  const article = new Readability(dom.window.document).parse();
+  if (!article || !article.content) {
+    return null;
+  }
+
+  const absHtml = resolveUrls(article.content, target.toString());
+  return {
+    title: article.title ?? undefined,
+    byline: article.byline ?? undefined,
+    siteName: article.siteName ?? undefined,
+    excerpt: article.excerpt ?? undefined,
+    length: article.length ?? undefined,
+    contentHtml: absHtml,
+  };
+}
+
+async function extractViaJina(target: URL): Promise<Extracted | null> {
+  const mirrorUrl = `${JINA_READER_PREFIX}${target.toString()}`;
+  const res = await fetch(mirrorUrl, {
+    headers: {
+      Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
+    },
+  });
+  if (!res.ok) return null;
+  const text = (await res.text()).trim();
+  if (!text) return null;
+  // If the mirror itself fails, it can return an HTML error page. Do not
+  // surface that as article content.
+  if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) return null;
+  const safe = markdownToBasicHtml(text);
+  return {
+    contentHtml: `<article>${safe}</article>`,
+    length: text.length,
+  };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function markdownToBasicHtml(source: string): string {
+  const lines = source.split(/\r?\n/);
+  const chunks: string[] = [];
+  let para: string[] = [];
+  let list: string[] = [];
+
+  const flushPara = () => {
+    if (!para.length) return;
+    chunks.push(`<p>${escapeHtml(para.join(" "))}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (!list.length) return;
+    chunks.push(`<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+    list = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = heading[1].length;
+      chunks.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`);
+      continue;
+    }
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushPara();
+      list.push(bullet[1]);
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+
+  flushPara();
+  flushList();
+  return chunks.join("");
 }
 
 function proxyImg(absUrl: string): string {
