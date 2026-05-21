@@ -1302,42 +1302,54 @@ function ArticleBody({
       setActiveId(null);
       return;
     }
-    const headings = Array.from(
+    const headingNodes = Array.from(
       root.querySelectorAll<HTMLHeadingElement>(
         "h1[id], h2[id], h3[id], h4[id]",
       ),
-    );
-    const items = headings
-      .map((h) => ({
+    ).filter((h) => (h.textContent ?? "").trim().length > 0);
+    setToc(
+      headingNodes.map((h) => ({
         id: h.id,
         text: (h.textContent ?? "").trim(),
         level: parseInt(h.tagName.slice(1), 10),
-        top: h.offsetTop,
-      }))
-      .filter((it) => it.text.length > 0);
-    setToc(items.map(({ id, text, level }) => ({ id, text, level })));
-    if (items.length === 0) {
+      })),
+    );
+    if (headingNodes.length === 0) {
       setActiveId(null);
       return;
     }
 
     const scroller = root.closest("article");
     const getScrollTop = () => (scroller ? scroller.scrollTop : window.scrollY);
-    const updateActive = () => {
-      const scrollTop = getScrollTop();
-      const marker = scrollTop + 180;
-      let current = items[0]?.id ?? null;
-      for (const it of items) {
-        if (it.top <= marker) current = it.id;
+    let rafId = 0;
+    let lastId: string | null = null;
+    const compute = () => {
+      rafId = 0;
+      const marker = getScrollTop() + 180;
+      let current = headingNodes[0].id;
+      for (const h of headingNodes) {
+        // Read offsetTop live — survives layout shifts when lazy images
+        // load in after initial mount.
+        if (h.offsetTop <= marker) current = h.id;
         else break;
       }
-      setActiveId(current);
+      if (current !== lastId) {
+        lastId = current;
+        setActiveId(current);
+      }
+    };
+    const schedule = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(compute);
     };
 
-    updateActive();
+    compute();
     const target = scroller ?? window;
-    target.addEventListener("scroll", updateActive, { passive: true });
-    return () => target.removeEventListener("scroll", updateActive);
+    target.addEventListener("scroll", schedule, { passive: true });
+    return () => {
+      target.removeEventListener("scroll", schedule);
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [html, article.id]);
 
   useEffect(() => {
