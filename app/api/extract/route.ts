@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
-const JINA_READER_PREFIX = "https://r.jina.ai/http://";
+const JINA_READER_HOST = "https://r.jina.ai/";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -122,7 +122,7 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
 }
 
 async function extractViaJina(target: URL): Promise<Extracted | null> {
-  const mirrorUrl = `${JINA_READER_PREFIX}${target.toString()}`;
+  const mirrorUrl = `${JINA_READER_HOST}${target.protocol}//${target.host}${target.pathname}${target.search}${target.hash}`;
   const res = await fetch(mirrorUrl, {
     headers: {
       Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
