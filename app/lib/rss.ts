@@ -334,6 +334,7 @@ export function sanitizeHtml(input: string): string {
     }
     if (tag === "img") {
       sanitizedAttrs.push('loading="lazy"');
+      sanitizedAttrs.push('decoding="async"');
       sanitizedAttrs.push('referrerpolicy="no-referrer"');
     }
     return `<${tag}${sanitizedAttrs.length ? " " + sanitizedAttrs.join(" ") : ""}>`;

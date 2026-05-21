@@ -159,9 +159,71 @@ function slugify(s: string): string {
     .slice(0, 60);
 }
 
+const IMAGE_SRCSET_WIDTHS = [400, 800, 1200, 1600];
+const IMAGE_DEFAULT_WIDTH = 1200;
+const IMAGE_SIZES = "(min-width: 768px) 768px, 100vw";
+
+function proxiedImageUrl(absUrl: string, width?: number): string {
+  const w = width ? `&w=${width}` : "";
+  return `/api/image?url=${encodeURIComponent(absUrl)}${w}`;
+}
+
+function buildSrcset(absUrl: string): string {
+  return IMAGE_SRCSET_WIDTHS.map(
+    (w) => `${proxiedImageUrl(absUrl, w)} ${w}w`,
+  ).join(", ");
+}
+
+function absolutize(value: string, baseUrl: string | undefined): string | null {
+  if (!value) return null;
+  if (/^data:/i.test(value)) return null;
+  if (/^\/api\/image\?/i.test(value)) return null;
+  try {
+    return baseUrl ? new URL(value, baseUrl).href : new URL(value).href;
+  } catch {
+    return null;
+  }
+}
+
+export function proxyImagesInDoc(
+  doc: Document,
+  baseUrl: string | undefined,
+): void {
+  doc.querySelectorAll("img").forEach((img) => {
+    const rawSrc = img.getAttribute("src");
+    const abs = rawSrc ? absolutize(rawSrc, baseUrl) : null;
+    if (abs) {
+      img.setAttribute("src", proxiedImageUrl(abs, IMAGE_DEFAULT_WIDTH));
+      img.setAttribute("srcset", buildSrcset(abs));
+      if (!img.hasAttribute("sizes")) img.setAttribute("sizes", IMAGE_SIZES);
+    }
+    img.setAttribute("decoding", "async");
+    if (!img.hasAttribute("loading")) img.setAttribute("loading", "lazy");
+  });
+
+  doc.querySelectorAll("source[srcset]").forEach((src) => {
+    const v = src.getAttribute("srcset");
+    if (!v) return;
+    const parts = v
+      .split(",")
+      .map((part) => {
+        const trimmed = part.trim();
+        if (!trimmed) return "";
+        const [u, ...descriptor] = trimmed.split(/\s+/);
+        const abs = absolutize(u, baseUrl);
+        return abs
+          ? [proxiedImageUrl(abs, IMAGE_DEFAULT_WIDTH), ...descriptor].join(" ")
+          : trimmed;
+      })
+      .filter(Boolean);
+    src.setAttribute("srcset", parts.join(", "));
+  });
+}
+
 export function normalizeArticleHtml(html: string, baseUrl?: string): string {
   const doc = parseDocument(html, baseUrl);
   mergeIcons(doc as unknown as Document);
   assignHeadingIds(doc as unknown as Document);
+  proxyImagesInDoc(doc as unknown as Document, baseUrl);
   return doc.body?.innerHTML ?? "";
 }

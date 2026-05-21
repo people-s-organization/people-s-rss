@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
-import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
+import {
+  assignHeadingIds,
+  mergeIcons,
+  proxyImagesInDoc,
+} from "@/app/lib/articleHtml";
 import { parseDocument } from "@/app/lib/dom";
 import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
@@ -219,55 +223,17 @@ function markdownToBasicHtml(source: string): string {
   return chunks.join("");
 }
 
-function proxyImg(absUrl: string): string {
-  return `/api/image?url=${encodeURIComponent(absUrl)}`;
-}
-
-function isImageElement(tag: string): boolean {
-  return tag === "img" || tag === "source";
-}
-
 function resolveUrls(html: string, baseUrl: string): string {
   const doc = parseDocument(html, baseUrl);
   mergeIcons(doc);
   assignHeadingIds(doc);
-  doc.querySelectorAll("[src]").forEach((el) => {
-    const v = el.getAttribute("src");
-    if (!v) return;
-    try {
-      const abs = new URL(v, baseUrl).href;
-      const tag = el.tagName.toLowerCase();
-      el.setAttribute("src", isImageElement(tag) ? proxyImg(abs) : abs);
-    } catch {}
-  });
-  doc.querySelectorAll("[href]").forEach((el) => {
+  proxyImagesInDoc(doc, baseUrl);
+  doc.querySelectorAll("a[href]").forEach((el) => {
     const v = el.getAttribute("href");
     if (!v) return;
     try {
       el.setAttribute("href", new URL(v, baseUrl).href);
     } catch {}
-  });
-  doc.querySelectorAll("[srcset]").forEach((el) => {
-    const v = el.getAttribute("srcset");
-    if (!v) return;
-    const tag = el.tagName.toLowerCase();
-    const proxy = isImageElement(tag);
-    const rewritten = v
-      .split(",")
-      .map((part) => {
-        const trimmed = part.trim();
-        if (!trimmed) return "";
-        const [u, ...rest] = trimmed.split(/\s+/);
-        try {
-          const abs = new URL(u, baseUrl).href;
-          return [proxy ? proxyImg(abs) : abs, ...rest].join(" ");
-        } catch {
-          return trimmed;
-        }
-      })
-      .filter(Boolean)
-      .join(", ");
-    el.setAttribute("srcset", rewritten);
   });
   return doc.body.innerHTML;
 }
