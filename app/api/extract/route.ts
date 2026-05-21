@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
-import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
+import { assignHeadingIds, mergeIcons, normalizeArticleHtml } from "@/app/lib/articleHtml";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -135,7 +135,7 @@ async function extractViaJina(target: URL): Promise<Extracted | null> {
   // surface that as article content.
   if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) return null;
   if (/^(error|{"error")/i.test(text.slice(0, 64))) return null;
-  const safe = markdownToBasicHtml(text);
+  const safe = normalizeArticleHtml(markdownToBasicHtml(text));
   return {
     contentHtml: `<article>${safe}</article>`,
     length: text.length,
