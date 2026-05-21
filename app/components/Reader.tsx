@@ -1303,30 +1303,30 @@ function ArticleBody({
         level: parseInt(h.tagName.slice(1), 10),
         top: h.offsetTop,
       }))
-      .filter((it) => it.top >= minTop && it.top <= maxTop)
-      .map(({ id, text, level }) => ({ id, text, level }));
-    setToc(items);
+      .filter((it) => it.top >= minTop && it.top <= maxTop);
+    setToc(items.map(({ id, text, level }) => ({ id, text, level })));
     if (items.length === 0) {
       setActiveId(null);
       return;
     }
 
     const scroller = root.closest("article");
-    const observer = new IntersectionObserver(
-      (entries) => {
-        const visible = entries
-          .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
-        if (visible[0]) setActiveId(visible[0].target.id);
-      },
-      {
-        root: scroller ?? undefined,
-        rootMargin: "0px 0px -65% 0px",
-        threshold: 0,
-      },
-    );
-    for (const h of headings) observer.observe(h);
-    return () => observer.disconnect();
+    const getScrollTop = () => (scroller ? scroller.scrollTop : window.scrollY);
+    const updateActive = () => {
+      const scrollTop = getScrollTop();
+      const marker = scrollTop + 180;
+      let current = items[0]?.id ?? null;
+      for (const it of items) {
+        if (it.top <= marker) current = it.id;
+        else break;
+      }
+      setActiveId(current);
+    };
+
+    updateActive();
+    const target = scroller ?? window;
+    target.addEventListener("scroll", updateActive, { passive: true });
+    return () => target.removeEventListener("scroll", updateActive);
   }, [html, article.id]);
 
   function jumpTo(id: string) {
