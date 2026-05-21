@@ -179,7 +179,7 @@ export function Reader() {
       const res = await fetch(url, {
         cache: silent ? "default" : "no-store",
       });
-      const data = (await res.json()) as { feed?: ParsedFeed; error?: string };
+      const data = await readApiJson<{ feed?: ParsedFeed }>(res);
       if (!res.ok || !data.feed) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
@@ -241,10 +241,7 @@ export function Reader() {
           ai: nextAI,
         }),
       });
-      const data = (await res.json()) as {
-        updatedAt?: number;
-        error?: string;
-      };
+      const data = await readApiJson<{ updatedAt?: number }>(res);
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setSyncStatus({
         state: "idle",
@@ -270,10 +267,7 @@ export function Reader() {
     (async () => {
       try {
         const res = await fetch("/api/sync");
-        const data = (await res.json()) as {
-          blob?: SyncBlob | null;
-          error?: string;
-        };
+        const data = await readApiJson<{ blob?: SyncBlob | null }>(res);
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         if (cancelled) return;
         const remote = data.blob;
@@ -414,7 +408,7 @@ export function Reader() {
       const res = await fetch(
         `/api/feed?url=${encodeURIComponent(pagedUrl)}`,
       );
-      const data = (await res.json()) as { feed?: ParsedFeed; error?: string };
+      const data = await readApiJson<{ feed?: ParsedFeed }>(res);
       if (!res.ok || !data.feed) {
         setPagination((prev) => ({
           ...prev,
@@ -578,7 +572,7 @@ export function Reader() {
 
   async function handleAddFeed(url: string) {
     const res = await fetch(`/api/feed?url=${encodeURIComponent(url)}`);
-    const data = (await res.json()) as { feed?: ParsedFeed; error?: string };
+    const data = await readApiJson<{ feed?: ParsedFeed }>(res);
     if (!res.ok || !data.feed) {
       throw new Error(data.error ?? `HTTP ${res.status}`);
     }
@@ -666,11 +660,10 @@ export function Reader() {
       const res = await fetch(
         `/api/extract?url=${encodeURIComponent(article.link)}`,
       );
-      const data = (await res.json()) as {
+      const data = await readApiJson<{
         contentHtml?: string;
         contentText?: string;
-        error?: string;
-      };
+      }>(res);
       if (!res.ok || !data.contentHtml) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
@@ -708,10 +701,10 @@ export function Reader() {
             `/api/extract?url=${encodeURIComponent(article.link)}`,
           );
           if (res.ok) {
-            const data = (await res.json()) as {
+            const data = await readApiJson<{
               contentHtml?: string;
               contentText?: string;
-            };
+            }>(res);
             if (data.contentText) {
               body = data.contentText;
               setFullContentText((prev) => ({
@@ -742,7 +735,7 @@ export function Reader() {
           content: body,
         }),
       });
-      const data = (await res.json()) as { summary?: string; error?: string };
+      const data = await readApiJson<{ summary?: string }>(res);
       if (!res.ok || !data.summary) {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
@@ -761,6 +754,18 @@ export function Reader() {
   const refreshingAll = Object.values(feedStates).some(
     (s) => s.status === "loading",
   );
+
+  async function readApiJson<T>(res: Response): Promise<T & { error?: string }> {
+    const text = await res.text();
+    try {
+      return JSON.parse(text) as T & { error?: string };
+    } catch {
+      const preview = text.slice(0, 120).replace(/\s+/g, " ").trim();
+      throw new Error(
+        preview ? `Invalid server response: ${preview}` : "Invalid server response",
+      );
+    }
+  }
 
   return (
     <div className="flex h-[100dvh] w-full">
@@ -848,11 +853,11 @@ export function Reader() {
       </aside>
       <button
         onClick={() => setFeedsPanelCollapsed((v) => !v)}
-        className="hidden md:flex shrink-0 h-10 mt-3 items-center justify-center rounded-r border border-l-0 border-border bg-background px-2 text-xs hover:bg-muted"
+        className="hidden md:flex shrink-0 self-center h-20 w-3 items-center justify-center rounded-r border border-l-0 border-border bg-background text-[10px] hover:bg-muted"
         aria-label={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
         title={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
       >
-        {feedsPanelCollapsed ? `⟩ ${t.subscriptions}` : `${t.subscriptions} ⟨`}
+        {feedsPanelCollapsed ? "⟩" : "⟨"}
       </button>
 
       <section
@@ -1093,11 +1098,11 @@ export function Reader() {
       </section>
       <button
         onClick={() => setArticlesPanelCollapsed((v) => !v)}
-        className="hidden md:flex shrink-0 h-10 mt-3 items-center justify-center rounded-r border border-l-0 border-border bg-background px-2 text-xs hover:bg-muted"
+        className="hidden md:flex shrink-0 self-center h-20 w-3 items-center justify-center rounded-r border border-l-0 border-border bg-background text-[10px] hover:bg-muted"
         aria-label={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
         title={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
       >
-        {articlesPanelCollapsed ? `⟩ ${t.list}` : `${t.list} ⟨`}
+        {articlesPanelCollapsed ? "⟩" : "⟨"}
       </button>
 
       <main className="hidden md:flex flex-1 flex-col overflow-hidden">
@@ -1747,7 +1752,7 @@ function FeedGroup({
       {showHeading && (
         <button
           onClick={onToggle}
-          className="w-full text-left px-3 py-1 text-[10px] uppercase tracking-wider opacity-60 hover:opacity-100 flex items-center gap-1.5"
+          className="w-full text-left px-3 py-1.5 text-[10px] uppercase tracking-wider bg-muted/40 border-y border-border/60 text-foreground/80 hover:bg-muted/70 flex items-center gap-1.5"
         >
           <span className="inline-block w-3">{collapsed ? "▸" : "▾"}</span>
           <span className="flex-1 truncate">{title}</span>
@@ -1830,7 +1835,7 @@ function FeedRow({
           e.preventDefault();
           onOpenMenu();
         }}
-        className="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 pr-8"
+        className="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 pr-12"
         title={feed.url}
       >
         <span className="truncate">{feed.title}</span>
@@ -1842,7 +1847,8 @@ function FeedRow({
               : unreadCount || ""}
         </span>
       </button>
-      <button
+      {state?.status !== "error" && (
+        <button
         onClick={(e) => {
           e.stopPropagation();
           onRefreshFeed(feed.id);
@@ -1852,7 +1858,8 @@ function FeedRow({
         title={`Refresh ${feed.title}`}
       >
         ↻
-      </button>
+        </button>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
