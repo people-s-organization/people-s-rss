@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
 import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
+import { parseDocument } from "@/app/lib/dom";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,8 +109,8 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
     return null;
   }
   const html = new TextDecoder("utf-8").decode(buf);
-  const dom = new JSDOM(html, { url: target.toString() });
-  const article = new Readability(dom.window.document).parse();
+  const doc = parseDocument(html, target.toString());
+  const article = new Readability(doc as unknown as Document).parse();
   if (!article || !article.content) {
     return null;
   }
@@ -212,8 +212,7 @@ function isImageElement(tag: string): boolean {
 }
 
 function resolveUrls(html: string, baseUrl: string): string {
-  const wrap = new JSDOM(`<body>${html}</body>`, { url: baseUrl });
-  const doc = wrap.window.document;
+  const doc = parseDocument(html, baseUrl);
   mergeIcons(doc);
   assignHeadingIds(doc);
   doc.querySelectorAll("[src]").forEach((el) => {

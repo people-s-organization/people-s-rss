@@ -1,4 +1,4 @@
-import { JSDOM } from "jsdom";
+import { parseDocument } from "./dom";
 
 const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
 const MERGE_TARGET_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6"]);
@@ -160,9 +160,8 @@ function slugify(s: string): string {
 }
 
 export function normalizeArticleHtml(html: string, baseUrl?: string): string {
-  const wrap = new JSDOM(`<body>${html}</body>`, baseUrl ? { url: baseUrl } : undefined);
-  const doc = wrap.window.document;
-  mergeIcons(doc);
-  assignHeadingIds(doc);
-  return doc.body.innerHTML;
+  const doc = parseDocument(html, baseUrl);
+  mergeIcons(doc as unknown as Document);
+  assignHeadingIds(doc as unknown as Document);
+  return doc.body?.innerHTML ?? "";
 }
