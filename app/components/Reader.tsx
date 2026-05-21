@@ -1348,7 +1348,18 @@ function ArticleBody({
       `button[data-toc-id="${CSS.escape(activeId)}"]`,
     );
     if (!btn) return;
-    btn.scrollIntoView({ block: "nearest" });
+    // Scroll the TOC list manually instead of using btn.scrollIntoView —
+    // the latter walks up to the nearest scroll container, which on this
+    // layout is the <article>, and a synchronous scrollIntoView there
+    // cancels any in-flight smooth scroll triggered by jumpTo (so the
+    // second / third TOC click would never finish navigating).
+    const tocRect = tocRoot.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    if (btnRect.top < tocRect.top) {
+      tocRoot.scrollTop += btnRect.top - tocRect.top;
+    } else if (btnRect.bottom > tocRect.bottom) {
+      tocRoot.scrollTop += btnRect.bottom - tocRect.bottom;
+    }
   }, [activeId]);
 
   function jumpTo(id: string) {
