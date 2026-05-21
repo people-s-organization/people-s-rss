@@ -10,6 +10,20 @@ const parser = new XMLParser({
   parseAttributeValue: false,
 });
 
+// Some feeds (notably xueqiu) double-encode their HTML payload as
+// &lt;![CDATA[...]]&gt; — once the XML parser decodes entities, we end up
+// with literal <![CDATA[...]]> markers in what is supposed to be HTML.
+// Browsers and linkedom treat <![ as a bogus comment opener and consume
+// the entire body as a comment, which makes the article render blank.
+// Strip the literal markers before anything else touches the string.
+function stripLiteralCdata(html: string): string {
+  let out = html;
+  // Strip a wrapping <![CDATA[ ... ]]>, then any leftover stray markers.
+  out = out.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/g, "$1");
+  out = out.replace(/<!\[CDATA\[/g, "").replace(/\]\]>/g, "");
+  return out;
+}
+
 function pickText(node: unknown): string | undefined {
   if (node == null) return undefined;
   if (typeof node === "string") return node;
@@ -162,8 +176,9 @@ function parseRssItem(item: Record<string, unknown>): ParsedItem {
     parseDate(pickText(item["dc:date"]));
   const encoded = pickText(item["content:encoded"]);
   const rawHtml = encoded ?? pickText(item.description) ?? undefined;
-  const contentHtml = rawHtml ? sanitizeHtml(rawHtml) : undefined;
-  const contentText = rawHtml ? stripHtml(rawHtml) : undefined;
+  const unwrapped = rawHtml ? stripLiteralCdata(rawHtml) : undefined;
+  const contentHtml = unwrapped ? sanitizeHtml(unwrapped) : undefined;
+  const contentText = unwrapped ? stripHtml(unwrapped) : undefined;
   const hasFullContent = Boolean(encoded);
   const guid = pickText(item.guid);
   return {
@@ -198,8 +213,9 @@ function parseAtomEntry(entry: Record<string, unknown>): ParsedItem {
     parseDate(pickText(entry.updated));
   const content = pickText(entry.content);
   const rawHtml = content ?? pickText(entry.summary) ?? undefined;
-  const contentHtml = rawHtml ? sanitizeHtml(rawHtml) : undefined;
-  const contentText = rawHtml ? stripHtml(rawHtml) : undefined;
+  const unwrapped = rawHtml ? stripLiteralCdata(rawHtml) : undefined;
+  const contentHtml = unwrapped ? sanitizeHtml(unwrapped) : undefined;
+  const contentText = unwrapped ? stripHtml(unwrapped) : undefined;
   const hasFullContent = Boolean(content);
   const guid = pickText(entry.id);
   return {
