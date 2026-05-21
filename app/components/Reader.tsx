@@ -1491,7 +1491,7 @@ function MobileFeedPicker({
                         <span className="truncate">{f.title}</span>
                         <span
                           className="text-xs opacity-70 shrink-0"
-                          title={s?.status === "error" ? s.error : undefined}
+                          title={s?.status === "error" ? `加载失败：${s.error}` : undefined}
                         >
                           {s?.status === "loading"
                             ? "…"
@@ -1867,7 +1867,7 @@ function FeedRow({
         title={feed.url}
       >
         <span className="truncate">{feed.title}</span>
-        <span className="text-xs opacity-70 shrink-0" title={errorMessage ?? undefined}>
+        <span className="text-xs opacity-70 shrink-0" title={errorMessage ? `加载失败：${errorMessage}` : undefined}>
           {state?.status === "loading"
             ? "…"
             : state?.status === "error"
