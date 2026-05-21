@@ -112,7 +112,7 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
     byline: article.byline ?? undefined,
     siteName: article.siteName ?? undefined,
     excerpt: article.excerpt ?? undefined,
-    length: article.length,
+    length: article.length ?? undefined,
     contentHtml: absHtml,
   };
 }
