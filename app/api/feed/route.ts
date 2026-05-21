@@ -35,12 +35,20 @@ export async function GET(request: Request) {
         Accept:
           "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
       },
+      cache: "no-store",
       signal: controller.signal,
       redirect: "follow",
     });
     if (!res.ok) {
+      const preview = await safePreview(res);
       return NextResponse.json(
-        { error: `Upstream ${res.status}` },
+        {
+          error: `Upstream ${res.status}`,
+          stage: "upstream_non_ok",
+          upstreamStatus: res.status,
+          upstreamContentType: res.headers.get("content-type") ?? undefined,
+          preview,
+        },
         { status: 502 },
       );
     }
@@ -69,8 +77,21 @@ export async function GET(request: Request) {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Failed to fetch feed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message, stage: "feed_exception" },
+      { status: 500 },
+    );
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function safePreview(res: Response): Promise<string | undefined> {
+  try {
+    const text = await res.text();
+    const preview = text.slice(0, 200).replace(/\s+/g, " ").trim();
+    return preview || undefined;
+  } catch {
+    return undefined;
   }
 }

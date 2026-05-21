@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
-import { assignHeadingIds, mergeIcons, normalizeArticleHtml } from "@/app/lib/articleHtml";
+import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +38,7 @@ export async function GET(request: Request) {
         Accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
+      cache: "no-store",
       signal: controller.signal,
       redirect: "follow",
     });
@@ -68,8 +69,35 @@ export async function GET(request: Request) {
       },
     );
   } catch (err) {
+    try {
+      const fallback = await extractViaJina(target);
+      if (fallback) {
+        const cleanHtml = sanitizeHtml(fallback.contentHtml);
+        const text = stripHtml(fallback.contentHtml);
+        return NextResponse.json({
+          title: fallback.title,
+          byline: fallback.byline,
+          siteName: fallback.siteName,
+          excerpt: fallback.excerpt,
+          length: fallback.length ?? text.length,
+          contentHtml: cleanHtml,
+          contentText: text,
+        });
+      }
+    } catch (fallbackErr) {
+      const message = err instanceof Error ? err.message : "Extract failed";
+      const fallbackMessage =
+        fallbackErr instanceof Error ? fallbackErr.message : "Fallback failed";
+      return NextResponse.json(
+        { error: message, stage: "extract_fallback_exception", fallbackError: fallbackMessage },
+        { status: 500 },
+      );
+    }
     const message = err instanceof Error ? err.message : "Extract failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: message, stage: "extract_exception" },
+      { status: 500 },
+    );
   } finally {
     clearTimeout(timer);
   }
@@ -123,11 +151,17 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
 
 async function extractViaJina(target: URL): Promise<Extracted | null> {
   const mirrorUrl = `${JINA_READER_HOST}${target.protocol}//${target.host}${target.pathname}${target.search}${target.hash}`;
-  const res = await fetch(mirrorUrl, {
-    headers: {
-      Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(mirrorUrl, {
+      headers: {
+        Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
+      },
+      cache: "no-store",
+    });
+  } catch {
+    return null;
+  }
   if (!res.ok) return null;
   const text = (await res.text()).trim();
   if (!text) return null;
@@ -135,7 +169,7 @@ async function extractViaJina(target: URL): Promise<Extracted | null> {
   // surface that as article content.
   if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) return null;
   if (/^(error|{"error")/i.test(text.slice(0, 64))) return null;
-  const safe = normalizeArticleHtml(markdownToBasicHtml(text));
+  const safe = markdownToBasicHtml(text);
   return {
     contentHtml: `<article>${safe}</article>`,
     length: text.length,
