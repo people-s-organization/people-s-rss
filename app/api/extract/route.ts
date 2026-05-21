@@ -17,9 +17,14 @@ export async function GET(request: Request) {
   if (!url) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
+  const normalizedUrl = normalizeTargetUrl(url);
+  if (!normalizedUrl) {
+    return NextResponse.json({ error: "Invalid url" }, { status: 400 });
+  }
+
   let target: URL;
   try {
-    target = new URL(url);
+    target = new URL(normalizedUrl);
   } catch {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
@@ -284,4 +289,30 @@ function resolveUrls(html: string, baseUrl: string): string {
     el.setAttribute("srcset", rewritten);
   });
   return doc.body.innerHTML;
+}
+
+
+function normalizeTargetUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return null;
+
+  const candidates = [value];
+  try {
+    const decoded = decodeURIComponent(value);
+    if (decoded !== value) candidates.push(decoded);
+  } catch {}
+  try {
+    const decodedTwice = decodeURIComponent(candidates[candidates.length - 1]);
+    if (decodedTwice !== candidates[candidates.length - 1]) candidates.push(decodedTwice);
+  } catch {}
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.toString();
+      }
+    } catch {}
+  }
+  return null;
 }
