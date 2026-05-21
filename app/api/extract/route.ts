@@ -95,6 +95,10 @@ async function extractContent(res: Response, target: URL): Promise<Extracted | n
 }
 
 async function parseArticleFromHtml(res: Response, target: URL): Promise<Extracted | null> {
+  const contentType = (res.headers.get("content-type") || "").toLowerCase();
+  if (contentType && !contentType.includes("html") && !contentType.includes("xml")) {
+    return null;
+  }
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_BYTES) {
     return null;
@@ -130,6 +134,7 @@ async function extractViaJina(target: URL): Promise<Extracted | null> {
   // If the mirror itself fails, it can return an HTML error page. Do not
   // surface that as article content.
   if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) return null;
+  if (/^(error|{"error")/i.test(text.slice(0, 64))) return null;
   const safe = markdownToBasicHtml(text);
   return {
     contentHtml: `<article>${safe}</article>`,
