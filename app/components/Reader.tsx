@@ -722,6 +722,13 @@ export function Reader() {
         } catch {}
       }
       if (!body) body = article.contentText || article.title;
+      const MAX_SUMMARY_INPUT = 50_000;
+      if (body.length > MAX_SUMMARY_INPUT) {
+        setSummaryError(
+          `Article is too long; only the first ${MAX_SUMMARY_INPUT.toLocaleString()} characters were used for summary.`,
+        );
+        body = body.slice(0, MAX_SUMMARY_INPUT);
+      }
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
