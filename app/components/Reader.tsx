@@ -51,6 +51,40 @@ type SyncStatus =
   | { state: "syncing" }
   | { state: "error"; error: string };
 
+type UILocale = "zh" | "en";
+const I18N = {
+  zh: {
+    allArticles: "全部文章",
+    uncategorized: "未分类",
+    unread: "未读",
+    all: "全部",
+    markAll: "全部已读",
+    noFeeds: "还没有订阅源。打开设置添加一个。",
+    selectArticle: "选择一篇文章开始阅读。",
+    expandSubscriptions: "展开订阅面板",
+    collapseSubscriptions: "折叠订阅面板",
+    expandArticles: "展开文章列表面板",
+    collapseArticles: "折叠文章列表面板",
+    subscriptions: "订阅",
+    list: "列表",
+  },
+  en: {
+    allArticles: "All articles",
+    uncategorized: "Uncategorized",
+    unread: "Unread",
+    all: "All",
+    markAll: "✓ all",
+    noFeeds: "No feeds yet. Open settings to add one.",
+    selectArticle: "Select an article to read.",
+    expandSubscriptions: "Expand subscriptions panel",
+    collapseSubscriptions: "Collapse subscriptions panel",
+    expandArticles: "Expand articles panel",
+    collapseArticles: "Collapse articles panel",
+    subscriptions: "Subscriptions",
+    list: "List",
+  },
+} as const;
+
 export function Reader() {
   const { data: session, status: authStatus } = useSession();
   const [feeds, setFeeds] = useState<Feed[]>([]);
@@ -81,7 +115,15 @@ export function Reader() {
   };
   const [openFeedMenuId, setOpenFeedMenuId] = useState<string | null>(null);
   const [mobileFeedPickerOpen, setMobileFeedPickerOpen] = useState(false);
+  const [feedsPanelCollapsed, setFeedsPanelCollapsed] = useState(false);
+  const [articlesPanelCollapsed, setArticlesPanelCollapsed] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
+  const [locale] = useState<UILocale>(() => {
+    if (typeof navigator === "undefined") return "zh";
+    const lang = (navigator.language || "").toLowerCase();
+    return lang.startsWith("zh") ? "zh" : "en";
+  });
+  const t = I18N[locale];
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -722,7 +764,11 @@ export function Reader() {
 
   return (
     <div className="flex h-[100dvh] w-full">
-      <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-border bg-muted/40">
+      <aside
+        className={`hidden md:flex shrink-0 flex-col border-r border-border bg-muted/40 transition-all ${
+          feedsPanelCollapsed ? "w-0 overflow-hidden border-r-0" : "w-64"
+        }`}
+      >
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h1 className="font-semibold tracking-tight">People&apos;s RSS</h1>
           <button
@@ -750,7 +796,7 @@ export function Reader() {
                 : "hover:bg-background/60"
             }`}
           >
-            <span>All articles</span>
+            <span>{t.allArticles}</span>
             {unreadCounts.__all > 0 && (
               <span className="text-xs opacity-70">{unreadCounts.__all}</span>
             )}
@@ -759,7 +805,8 @@ export function Reader() {
             {feedGroups.map((group) => (
               <FeedGroup
                 key={group.key}
-                title={group.key === "" ? "Uncategorized" : group.key}
+                groupKey={group.key}
+                title={group.key === "" ? t.uncategorized : group.key}
                 showHeading={group.key !== "" || feedGroups.length > 1}
                 collapsed={collapsedCategories.has(group.key)}
                 onToggle={() =>
@@ -785,18 +832,34 @@ export function Reader() {
                 onSetCategory={handleSetCategory}
                 onRenameFeed={handleRenameFeed}
                 onRemoveFeed={handleRemoveFeed}
+                onRefreshFeed={(id) => {
+                  const target = feeds.find((f) => f.id === id);
+                  if (target) void refreshFeed(target);
+                }}
               />
             ))}
           </div>
           {feeds.length === 0 && hydrated && (
             <p className="text-xs opacity-60 px-3 mt-4">
-              No feeds yet. Open settings to add one.
+              {t.noFeeds}
             </p>
           )}
         </nav>
       </aside>
+      <button
+        onClick={() => setFeedsPanelCollapsed((v) => !v)}
+        className="hidden md:flex shrink-0 w-2 md:w-2.5 h-full items-center justify-center border-r border-border bg-muted/50 hover:bg-muted"
+        aria-label={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
+        title={feedsPanelCollapsed ? t.expandSubscriptions : t.collapseSubscriptions}
+      >
+        <span className="text-[9px] opacity-70">{feedsPanelCollapsed ? "⟩" : "⟨"}</span>
+      </button>
 
-      <section className="relative w-full md:w-96 shrink-0 border-r border-border flex flex-col min-w-0">
+      <section
+        className={`relative w-full shrink-0 border-r border-border flex flex-col min-w-0 transition-all ${
+          articlesPanelCollapsed ? "md:w-0 md:overflow-hidden md:border-r-0" : "md:w-96"
+        }`}
+      >
         <div className="px-3 sm:px-4 py-3 border-b border-border flex items-center gap-2 flex-nowrap min-w-0">
           <button
             aria-label="Settings"
@@ -812,10 +875,10 @@ export function Reader() {
           >
             <span className="truncate">
               {selectedFeedId === "all"
-                ? "All"
+                ? t.all
                 : typeof selectedFeedId === "string" &&
                     selectedFeedId.startsWith("cat:")
-                  ? selectedFeedId.slice(4) || "Uncategorized"
+                  ? selectedFeedId.slice(4) || t.uncategorized
                   : feeds.find((f) => f.id === selectedFeedId)?.title ??
                     "Articles"}
             </span>
@@ -830,7 +893,7 @@ export function Reader() {
                   : "hover:bg-muted"
               }`}
             >
-              <span>Unread</span>
+              <span>{t.unread}</span>
               {unreadInScope > 0 && (
                 <span
                   className={`text-[10px] px-1 rounded ${
@@ -851,7 +914,7 @@ export function Reader() {
                   : "hover:bg-muted"
               }`}
             >
-              <span>All</span>
+              <span>{t.all}</span>
               {totalInScope > 0 && (
                 <span
                   className={`text-[10px] px-1 rounded ${
@@ -869,9 +932,9 @@ export function Reader() {
             onClick={markAllRead}
             disabled={visibleArticles.length === 0}
             className="text-xs rounded border border-border px-2 py-1 disabled:opacity-50 hover:bg-muted shrink-0"
-            title="Mark all visible as read"
+            title={t.markAll}
           >
-            ✓ all
+            {t.markAll}
           </button>
         </div>
         <ScrollWatcher
@@ -1028,6 +1091,14 @@ export function Reader() {
           </button>
         )}
       </section>
+      <button
+        onClick={() => setArticlesPanelCollapsed((v) => !v)}
+        className="hidden md:flex shrink-0 w-2 md:w-2.5 h-full items-center justify-center border-r border-border bg-muted/50 hover:bg-muted"
+        aria-label={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
+        title={articlesPanelCollapsed ? t.expandArticles : t.collapseArticles}
+      >
+        <span className="text-[9px] opacity-70">{articlesPanelCollapsed ? "⟩" : "⟨"}</span>
+      </button>
 
       <main className="hidden md:flex flex-1 flex-col overflow-hidden">
         {selectedArticle ? (
@@ -1036,7 +1107,7 @@ export function Reader() {
             className="flex-1 overflow-y-auto"
           >
             <header className="border-b border-border">
-              <div className="max-w-3xl mx-auto px-10 pt-10 pb-6">
+              <div className="w-full max-w-3xl mx-auto px-6 sm:px-10 pt-10 pb-6">
                 <div className="text-xs opacity-60 mb-2 flex items-center gap-2">
                   <span>{selectedArticle.feedTitle}</span>
                   {selectedArticle.author && (
@@ -1106,7 +1177,7 @@ export function Reader() {
             </header>
             {extracting === selectedArticle.id &&
               !fullContent[selectedArticle.id] && (
-                <div className="max-w-3xl mx-auto px-10 pt-4">
+                <div className="w-full max-w-3xl mx-auto px-6 sm:px-10 pt-4">
                   <div className="flex items-center gap-2 text-sm rounded-md border border-border bg-muted/50 px-3 py-2">
                     <Spinner />
                     <span className="opacity-80">
@@ -1126,7 +1197,7 @@ export function Reader() {
           </article>
         ) : (
           <div className="flex-1 grid place-items-center text-sm opacity-60">
-            Select an article to read.
+            {t.selectArticle}
           </div>
         )}
       </main>
@@ -1160,6 +1231,7 @@ export function Reader() {
             setMobileFeedPickerOpen(false);
           }}
           onClose={() => setMobileFeedPickerOpen(false)}
+          locale={locale}
         />
       )}
 
@@ -1206,11 +1278,17 @@ function ArticleBody({
         "h1[id], h2[id], h3[id], h4[id]",
       ),
     );
-    const items = headings.map((h) => ({
-      id: h.id,
-      text: (h.textContent ?? "").trim(),
-      level: parseInt(h.tagName.slice(1), 10),
-    }));
+    const minTop = 260;
+    const maxTop = Math.max(minTop + 1, root.scrollHeight - 520);
+    const items = headings
+      .map((h) => ({
+        id: h.id,
+        text: (h.textContent ?? "").trim(),
+        level: parseInt(h.tagName.slice(1), 10),
+        top: h.offsetTop,
+      }))
+      .filter((it) => it.top >= minTop && it.top <= maxTop)
+      .map(({ id, text, level }) => ({ id, text, level }));
     setToc(items);
     if (items.length === 0) {
       setActiveId(null);
@@ -1303,6 +1381,7 @@ function MobileFeedPicker({
   unreadCounts,
   onSelect,
   onClose,
+  locale,
 }: {
   feeds: Feed[];
   feedGroups: { key: string; feeds: Feed[] }[];
@@ -1311,7 +1390,9 @@ function MobileFeedPicker({
   unreadCounts: Record<string, number>;
   onSelect: (id: string) => void;
   onClose: () => void;
+  locale: UILocale;
 }) {
+  const t = I18N[locale];
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
@@ -1322,7 +1403,7 @@ function MobileFeedPicker({
         >
           ← Back
         </button>
-        <h2 className="text-sm font-semibold flex-1">Feeds</h2>
+        <h2 className="text-sm font-semibold flex-1">{t.subscriptions}</h2>
       </div>
       <nav className="flex-1 overflow-y-auto px-2 py-3">
         <button
@@ -1333,24 +1414,24 @@ function MobileFeedPicker({
               : "hover:bg-muted/60"
           }`}
         >
-          <span>All articles</span>
+          <span>{t.allArticles}</span>
           {unreadCounts.__all > 0 && (
             <span className="text-xs opacity-70">{unreadCounts.__all}</span>
           )}
         </button>
         <div className="mt-3 space-y-3">
           {feedGroups.map((group) => {
-            const label = group.key === "" ? "Uncategorized" : group.key;
+            const label = group.key === "" ? t.uncategorized : group.key;
             const catKey = `cat:${group.key}`;
             return (
               <div key={group.key || "__uncat__"}>
                 {(group.key !== "" || feedGroups.length > 1) && (
                   <button
                     onClick={() => onSelect(catKey)}
-                    className={`w-full text-left px-3 py-1 text-[11px] uppercase tracking-wider flex items-center justify-between ${
+                    className={`w-full text-left px-3 py-1.5 text-[11px] uppercase tracking-wider rounded-md border flex items-center justify-between ${
                       selectedFeedId === catKey
-                        ? "text-accent font-semibold"
-                        : "opacity-60 hover:opacity-100"
+                        ? "text-accent font-semibold bg-accent/10 border-accent/30"
+                        : "opacity-75 border-transparent hover:opacity-100 hover:bg-muted/70"
                     }`}
                   >
                     <span>{label}</span>
@@ -1375,7 +1456,10 @@ function MobileFeedPicker({
                         }`}
                       >
                         <span className="truncate">{f.title}</span>
-                        <span className="text-xs opacity-70 shrink-0">
+                        <span
+                          className="text-xs opacity-70 shrink-0"
+                          title={s?.status === "error" ? s.error : undefined}
+                        >
                           {s?.status === "loading"
                             ? "…"
                             : s?.status === "error"
@@ -1392,7 +1476,7 @@ function MobileFeedPicker({
         </div>
         {feeds.length === 0 && (
           <p className="text-xs opacity-60 px-3 mt-4">
-            No feeds yet. Tap ⚙ to add one.
+            {t.noFeeds}
           </p>
         )}
       </nav>
@@ -1619,6 +1703,7 @@ function Spinner() {
 }
 
 function FeedGroup({
+  groupKey,
   title,
   showHeading,
   collapsed,
@@ -1635,7 +1720,9 @@ function FeedGroup({
   onSetCategory,
   onRenameFeed,
   onRemoveFeed,
+  onRefreshFeed,
 }: {
+  groupKey: string;
   title: string;
   showHeading: boolean;
   collapsed: boolean;
@@ -1652,14 +1739,15 @@ function FeedGroup({
   onSetCategory: (id: string, category: string) => void;
   onRenameFeed: (id: string, title: string) => void;
   onRemoveFeed: (id: string) => void;
+  onRefreshFeed: (id: string) => void;
 }) {
-  const catKey = `cat:${title === "Uncategorized" ? "" : title}`;
+  const catKey = `cat:${groupKey}`;
   return (
     <div>
       {showHeading && (
         <button
           onClick={onToggle}
-          className="w-full text-left px-3 py-1 text-[10px] uppercase tracking-wider opacity-60 hover:opacity-100 flex items-center gap-1.5"
+          className="w-full text-left px-3 py-1.5 text-[10px] uppercase tracking-wider rounded-md border border-transparent bg-muted/40 hover:bg-muted/70 opacity-90 hover:opacity-100 flex items-center gap-1.5"
         >
           <span className="inline-block w-3">{collapsed ? "▸" : "▾"}</span>
           <span className="flex-1 truncate">{title}</span>
@@ -1690,6 +1778,7 @@ function FeedGroup({
                 onSetCategory={onSetCategory}
                 onRenameFeed={onRenameFeed}
                 onRemoveFeed={onRemoveFeed}
+                onRefreshFeed={onRefreshFeed}
               />
             );
           })}
@@ -1712,6 +1801,7 @@ function FeedRow({
   onSetCategory,
   onRenameFeed,
   onRemoveFeed,
+  onRefreshFeed,
 }: {
   feed: Feed;
   state: FeedState | undefined;
@@ -1725,7 +1815,9 @@ function FeedRow({
   onSetCategory: (id: string, category: string) => void;
   onRenameFeed: (id: string, title: string) => void;
   onRemoveFeed: (id: string) => void;
+  onRefreshFeed: (id: string) => void;
 }) {
+  const errorMessage = state?.status === "error" ? state.error : null;
   return (
     <div
       className={`group relative rounded ${
@@ -1738,17 +1830,28 @@ function FeedRow({
           e.preventDefault();
           onOpenMenu();
         }}
-        className="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 pr-8"
+        className="w-full text-left px-3 py-1.5 text-sm flex items-center justify-between gap-2 pr-14"
         title={feed.url}
       >
         <span className="truncate">{feed.title}</span>
-        <span className="text-xs opacity-70 shrink-0">
+        <span className="text-xs opacity-70 shrink-0 mr-8" title={errorMessage ?? undefined}>
           {state?.status === "loading"
             ? "…"
             : state?.status === "error"
               ? "!"
               : unreadCount || ""}
         </span>
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRefreshFeed(feed.id);
+        }}
+        className="absolute right-7 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-xs rounded hover:bg-muted opacity-0 group-hover:opacity-100 focus:opacity-100"
+        aria-label={`Refresh ${feed.title}`}
+        title={`Refresh ${feed.title}`}
+      >
+        ↻
       </button>
       <button
         onClick={(e) => {
