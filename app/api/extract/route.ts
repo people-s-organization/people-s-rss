@@ -3,6 +3,9 @@ import { Readability } from "@mozilla/readability";
 import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
 import { assignHeadingIds, mergeIcons } from "@/app/lib/articleHtml";
 import { parseDocument } from "@/app/lib/dom";
+import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
+import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,12 +14,25 @@ const MAX_BYTES = 8 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 const JINA_READER_HOST = "https://r.jina.ai/";
 
+function callerIdentity(request: Request, githubId?: string): string {
+  if (githubId) return `u:${githubId}`;
+  const fwd = request.headers.get("x-forwarded-for") ?? "";
+  const ip = fwd.split(",")[0].trim() || "anon";
+  return `ip:${ip}`;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const url = searchParams.get("url");
   if (!url) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
+
+  const session = await auth().catch(() => null);
+  const identity = callerIdentity(request, session?.user?.githubId);
+  const rl = await rateLimit("extract", identity, 30, 60);
+  if (!rl.ok) return rateLimitedResponse(rl);
+
   const normalizedUrl = normalizeTargetUrl(url);
   if (!normalizedUrl) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
@@ -24,12 +40,12 @@ export async function GET(request: Request) {
 
   let target: URL;
   try {
-    target = new URL(normalizedUrl);
-  } catch {
+    target = await assertPublicHttpUrl(normalizedUrl);
+  } catch (err) {
+    if (err instanceof SSRFError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
-  }
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return NextResponse.json({ error: "Unsupported protocol" }, { status: 400 });
   }
 
   const controller = new AbortController();

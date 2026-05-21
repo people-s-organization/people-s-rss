@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
+import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
+import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,18 +15,31 @@ const ABS_MAX_WIDTH = 2400;
 const ALLOWED_TYPES = /^image\//;
 const PASS_THROUGH_TYPES = /^image\/(svg\+xml|gif|x-icon|vnd\.microsoft\.icon)/;
 
+function callerIdentity(request: Request, githubId?: string): string {
+  if (githubId) return `u:${githubId}`;
+  const fwd = request.headers.get("x-forwarded-for") ?? "";
+  const ip = fwd.split(",")[0].trim() || "anon";
+  return `ip:${ip}`;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const raw = searchParams.get("url");
   if (!raw) return new NextResponse("Missing url", { status: 400 });
+
+  const session = await auth().catch(() => null);
+  const identity = callerIdentity(request, session?.user?.githubId);
+  const rl = await rateLimit("image", identity, 120, 60);
+  if (!rl.ok) return rateLimitedResponse(rl);
+
   let target: URL;
   try {
-    target = new URL(raw);
-  } catch {
+    target = await assertPublicHttpUrl(raw);
+  } catch (err) {
+    if (err instanceof SSRFError) {
+      return new NextResponse(err.message, { status: err.status });
+    }
     return new NextResponse("Invalid url", { status: 400 });
-  }
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return new NextResponse("Unsupported protocol", { status: 400 });
   }
 
   const widthParam = parseInt(searchParams.get("w") ?? "", 10);

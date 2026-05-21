@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
 import { getAIKey } from "@/app/lib/aiKeyStore";
 import { auth } from "@/auth";
+import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import type { AIStyle } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -29,6 +31,9 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   }
+
+  const rl = await rateLimit("summarize", githubId, 20, 60);
+  if (!rl.ok) return rateLimitedResponse(rl);
 
   let body: Body;
   try {
@@ -60,24 +65,23 @@ export async function POST(request: Request) {
     );
   }
 
-  let endpointUrl: URL;
   try {
-    endpointUrl = new URL(endpoint);
-  } catch {
+    await assertPublicHttpUrl(endpoint, { forceHttps: true });
+  } catch (err) {
+    if (err instanceof SSRFError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "Invalid endpoint" }, { status: 400 });
-  }
-  if (endpointUrl.protocol !== "http:" && endpointUrl.protocol !== "https:") {
-    return NextResponse.json(
-      { error: "Unsupported endpoint protocol" },
-      { status: 400 },
-    );
   }
 
   const content = (body.content ?? "").slice(0, MAX_CONTENT);
   if (!content) {
     return NextResponse.json({ error: "Empty content" }, { status: 400 });
   }
-  const language = body.language || "the same language as the article";
+  const rawLang = body.language?.trim() ?? "";
+  const language = rawLang
+    ? rawLang.replace(/[\r\n]+/g, " ").slice(0, 50)
+    : "the same language as the article";
   const systemPrompt = `You summarize RSS articles. Reply in ${language}. Produce 3-6 concise bullet points capturing key facts, conclusions, and any numbers. No preamble.`;
   const userPrompt = [
     body.title ? `Title: ${body.title}` : null,

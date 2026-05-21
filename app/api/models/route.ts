@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
 import { getAIKey } from "@/app/lib/aiKeyStore";
 import { auth } from "@/auth";
+import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import type { AIStyle } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -21,6 +23,9 @@ export async function POST(request: Request) {
   if (!githubId) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
+
+  const rl = await rateLimit("models", githubId, 10, 60);
+  if (!rl.ok) return rateLimitedResponse(rl);
 
   let body: Body;
   try {
@@ -55,9 +60,12 @@ export async function POST(request: Request) {
 
   let url: string;
   try {
-    new URL(endpoint);
+    await assertPublicHttpUrl(endpoint, { forceHttps: true });
     url = joinPath(endpoint, "/models");
-  } catch {
+  } catch (err) {
+    if (err instanceof SSRFError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "Invalid endpoint" }, { status: 400 });
   }
 

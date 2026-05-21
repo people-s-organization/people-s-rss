@@ -17,7 +17,9 @@ export function defaultModel(style: AIStyle): string {
 }
 
 export function joinPath(endpoint: string, path: string): string {
-  const trimmed = endpoint.replace(/\/+$/, "");
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${trimmed}${p}`;
+  const base = new URL(endpoint);
+  const cleanedSuffix = path.replace(/^\/+/, "").replace(/\.\.+/g, "");
+  const basePath = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
+  base.pathname = `${basePath}${cleanedSuffix}`.replace(/\/{2,}/g, "/");
+  return base.toString();
 }

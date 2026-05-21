@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { parseFeedXml } from "@/app/lib/rss";
 import { normalizeArticleHtml } from "@/app/lib/articleHtml";
+import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
+import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
+
+function callerIdentity(request: Request, githubId?: string): string {
+  if (githubId) return `u:${githubId}`;
+  const fwd = request.headers.get("x-forwarded-for") ?? "";
+  const ip = fwd.split(",")[0].trim() || "anon";
+  return `ip:${ip}`;
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -15,6 +25,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Missing url" }, { status: 400 });
   }
 
+  const session = await auth().catch(() => null);
+  const identity = callerIdentity(request, session?.user?.githubId);
+  const rl = await rateLimit("feed", identity, 60, 60);
+  if (!rl.ok) return rateLimitedResponse(rl);
+
   const normalizedUrl = normalizeTargetUrl(url);
   if (!normalizedUrl) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
@@ -22,12 +37,12 @@ export async function GET(request: Request) {
 
   let target: URL;
   try {
-    target = new URL(normalizedUrl);
-  } catch {
+    target = await assertPublicHttpUrl(normalizedUrl);
+  } catch (err) {
+    if (err instanceof SSRFError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
-  }
-  if (target.protocol !== "http:" && target.protocol !== "https:") {
-    return NextResponse.json({ error: "Unsupported protocol" }, { status: 400 });
   }
 
   const controller = new AbortController();
