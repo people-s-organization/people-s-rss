@@ -1128,7 +1128,7 @@ export function Reader() {
         {selectedArticle ? (
           <article
             key={selectedArticle.id}
-            className="flex-1 overflow-y-auto"
+            className="relative flex-1 overflow-y-auto"
           >
             <header className="border-b border-border">
               <div className="w-full max-w-3xl mx-auto px-6 sm:px-10 pt-10 pb-6">
@@ -1320,21 +1320,23 @@ function ArticleBody({
     }
 
     const scroller = root.closest("article");
+    if (!scroller) return;
     let rafId = 0;
     let lastId: string | null = null;
     const compute = () => {
       rafId = 0;
-      // Compare each heading's position to the visible top of the scroller.
-      // offsetTop won't work here — the <article> isn't a positioned ancestor,
-      // so offsetTop is measured from <body>, not from the scroll origin.
-      const scrollerTop = scroller
-        ? scroller.getBoundingClientRect().top
-        : 0;
-      const marker = 180;
+      // Heading is "active" once its top crosses the reading line near the
+      // top of the visible scroller. Keep the line small so each transition
+      // happens at the heading's exact crossing — a large value (e.g. 180)
+      // puts multiple closely-spaced headings in the active zone at once,
+      // and the last-wins loop then jumps past intermediate headings on a
+      // single trackpad swipe.
+      const readingLine = 24;
+      const scrollerTop = scroller.getBoundingClientRect().top;
       let current = headingNodes[0].id;
       for (const h of headingNodes) {
         const top = h.getBoundingClientRect().top - scrollerTop;
-        if (top <= marker) current = h.id;
+        if (top <= readingLine) current = h.id;
         else break;
       }
       if (current !== lastId) {
@@ -1348,10 +1350,9 @@ function ArticleBody({
     };
 
     compute();
-    const target = scroller ?? window;
-    target.addEventListener("scroll", schedule, { passive: true });
+    scroller.addEventListener("scroll", schedule, { passive: true });
     return () => {
-      target.removeEventListener("scroll", schedule);
+      scroller.removeEventListener("scroll", schedule);
       if (rafId) cancelAnimationFrame(rafId);
     };
   }, [html, article.id]);
