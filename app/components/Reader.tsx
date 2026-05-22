@@ -1320,17 +1320,21 @@ function ArticleBody({
     }
 
     const scroller = root.closest("article");
-    const getScrollTop = () => (scroller ? scroller.scrollTop : window.scrollY);
     let rafId = 0;
     let lastId: string | null = null;
     const compute = () => {
       rafId = 0;
-      const marker = getScrollTop() + 180;
+      // Compare each heading's position to the visible top of the scroller.
+      // offsetTop won't work here — the <article> isn't a positioned ancestor,
+      // so offsetTop is measured from <body>, not from the scroll origin.
+      const scrollerTop = scroller
+        ? scroller.getBoundingClientRect().top
+        : 0;
+      const marker = 180;
       let current = headingNodes[0].id;
       for (const h of headingNodes) {
-        // Read offsetTop live — survives layout shifts when lazy images
-        // load in after initial mount.
-        if (h.offsetTop <= marker) current = h.id;
+        const top = h.getBoundingClientRect().top - scrollerTop;
+        if (top <= marker) current = h.id;
         else break;
       }
       if (current !== lastId) {
@@ -1386,10 +1390,10 @@ function ArticleBody({
   const hasToc = toc.length >= 2;
   return (
     <div className="mx-auto w-full max-w-[1400px] px-6 sm:px-10">
-      <div className="xl:grid xl:grid-cols-[13rem_minmax(0,1fr)_13rem] xl:gap-6">
+      <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,48rem)_minmax(0,1fr)] xl:gap-6">
         <div className="hidden xl:block" aria-hidden />
         <div
-          className="prose-content w-full max-w-3xl min-w-0 py-8 xl:mx-auto"
+          className="prose-content w-full min-w-0 py-8"
           ref={containerRef}
         >
         {html ? (
@@ -1403,7 +1407,7 @@ function ArticleBody({
           </p>
         )}
         </div>
-        <aside className="hidden xl:block w-52 shrink-0 py-8">
+        <aside className="hidden xl:block min-w-0 py-8">
           {hasToc ? (
             <div
               ref={tocContainerRef}
