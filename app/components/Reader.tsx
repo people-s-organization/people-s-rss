@@ -1302,19 +1302,19 @@ function ArticleBody({
       setActiveId(null);
       return;
     }
-    const headingNodes = Array.from(
+    const initialHeadings = Array.from(
       root.querySelectorAll<HTMLHeadingElement>(
         "h1[id], h2[id], h3[id], h4[id]",
       ),
     ).filter((h) => (h.textContent ?? "").trim().length > 0);
     setToc(
-      headingNodes.map((h) => ({
+      initialHeadings.map((h) => ({
         id: h.id,
         text: (h.textContent ?? "").trim(),
         level: parseInt(h.tagName.slice(1), 10),
       })),
     );
-    if (headingNodes.length === 0) {
+    if (initialHeadings.length === 0) {
       setActiveId(null);
       return;
     }
@@ -1325,16 +1325,22 @@ function ArticleBody({
     let lastId: string | null = null;
     const compute = () => {
       rafId = 0;
-      // Heading is "active" once its top crosses the reading line near the
-      // top of the visible scroller. Keep the line small so each transition
-      // happens at the heading's exact crossing — a large value (e.g. 180)
-      // puts multiple closely-spaced headings in the active zone at once,
-      // and the last-wins loop then jumps past intermediate headings on a
-      // single trackpad swipe.
+      // Re-query headings every time instead of caching the NodeList. React
+      // can reconcile the dangerouslySetInnerHTML children between renders
+      // — even when the html string is identical — and the cached refs end
+      // up pointing at detached nodes whose getBoundingClientRect() returns
+      // all zeros, which then makes the last-heading the only "active" one.
+      const currentRoot = containerRef.current;
+      if (!currentRoot) return;
+      const headings = currentRoot.querySelectorAll<HTMLHeadingElement>(
+        "h1[id], h2[id], h3[id], h4[id]",
+      );
+      if (headings.length === 0) return;
       const readingLine = 24;
       const scrollerTop = scroller.getBoundingClientRect().top;
-      let current = headingNodes[0].id;
-      for (const h of headingNodes) {
+      let current = headings[0].id;
+      for (const h of headings) {
+        if (!(h.textContent ?? "").trim()) continue;
         const top = h.getBoundingClientRect().top - scrollerTop;
         if (top <= readingLine) current = h.id;
         else break;
