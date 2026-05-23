@@ -31,6 +31,8 @@ export async function rateLimit(
       : 0;
 
   if (count > max) {
+    // Immediately remove the member to prevent the sorted set from inflating under spam
+    await redis.zrem(key, member).catch(() => {});
     return { ok: false, remaining: 0, resetIn: windowSec };
   }
   return { ok: true, remaining: Math.max(0, max - count), resetIn: windowSec };

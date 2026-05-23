@@ -1,5 +1,8 @@
 import { promises as dns } from "node:dns";
+import dnsSync from "node:dns";
 import net from "node:net";
+import { Agent, fetch as undiciFetch } from "undici";
+import type { RequestInfo as UndiciRequestInfo, RequestInit as UndiciRequestInit } from "undici";
 
 export class SSRFError extends Error {
   status: number;
@@ -106,3 +109,53 @@ export async function assertPublicHttpUrl(
   }
   return url;
 }
+
+/**
+ * Connect-time DNS lookup guard against DNS rebinding (TOCTOU) attacks.
+ * Even though `assertPublicHttpUrl` pre-checks resolved IPs, an attacker could
+ * change DNS records between the check and the actual TCP connect. This agent
+ * re-validates every resolved IP at the socket layer.
+ */
+export const secureAgent = new Agent({
+  connect: {
+    lookup: (hostname, options, callback) => {
+      dnsSync.lookup(hostname, options, (err, address, family) => {
+        if (err) return callback(err, address, family);
+        if (Array.isArray(address)) {
+          for (const item of address) {
+            if (isPrivateAddress(item.address)) {
+              return callback(new Error("Access to private/reserved IP is blocked"), [], 4);
+            }
+          }
+        } else if (typeof address === "string") {
+          if (isPrivateAddress(address)) {
+            return callback(new Error("Access to private/reserved IP is blocked"), "", 4);
+          }
+        }
+        return callback(null, address, family);
+      });
+    }
+  }
+});
+
+export async function safeFetch(
+  input: UndiciRequestInfo,
+  init?: UndiciRequestInit
+): Promise<Response> {
+  const urlString =
+    typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : (input as { url: string }).url;
+  await assertPublicHttpUrl(urlString);
+  // undici.Response and global Response are structurally identical at runtime
+  // but have minor type-level differences (iterator generics). The cast is safe.
+  return undiciFetch(input, {
+    ...init,
+    // Intentionally override any caller-supplied dispatcher to enforce the
+    // connect-time private-IP guard on every outbound request.
+    dispatcher: secureAgent,
+  }) as unknown as Response;
+}
+

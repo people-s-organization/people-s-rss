@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseFeedXml } from "@/app/lib/rss";
 import { normalizeArticleHtml } from "@/app/lib/articleHtml";
-import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import { auth } from "@/auth";
 
@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(target.toString(), {
+    const res = await safeFetch(target.toString(), {
       headers: {
         "User-Agent": "PeoplesRSS/1.0 (+https://vercel.com)",
         Accept:

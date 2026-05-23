@@ -1,4 +1,5 @@
 import { XMLParser } from "fast-xml-parser";
+import { parseHTML } from "linkedom";
 import type { ParsedFeed, ParsedItem } from "./types";
 
 const parser = new XMLParser({
@@ -275,9 +276,9 @@ const CLASS_ALLOWLIST: Record<string, Set<string>> = {
 const URL_ATTRS = new Set(["href", "src"]);
 
 function isSafeUrl(value: string): boolean {
-  const trimmed = value.trim().toLowerCase();
-  if (trimmed.startsWith("javascript:") || trimmed.startsWith("data:")) {
-    if (trimmed.startsWith("data:image/")) return true;
+  const cleaned = value.replace(/[\x00-\x1F\x7F-\x9F\s]/g, "").toLowerCase();
+  if (cleaned.startsWith("javascript:") || cleaned.startsWith("data:")) {
+    if (cleaned.startsWith("data:image/")) return true;
     return false;
   }
   return true;
@@ -286,59 +287,93 @@ function isSafeUrl(value: string): boolean {
 export function sanitizeHtml(input: string): string {
   let html = input;
   html = html.replace(/<!--[\s\S]*?-->/g, "");
+  // Pre-strip dangerous elements with regex BEFORE DOM parsing.
+  // These tags are not in ALLOWED_TAGS so the DOM pass would remove them too,
+  // but DOM unwrapping preserves child nodes — meaning <script>alert(1)</script>
+  // would leak "alert(1)" as visible text and <style> blocks would leak raw CSS.
+  // Regex removal eliminates the entire element including its content.
   html = html.replace(/<script[\s\S]*?<\/script>/gi, "");
   html = html.replace(/<style[\s\S]*?<\/style>/gi, "");
   html = html.replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
   html = html.replace(/<object[\s\S]*?<\/object>/gi, "");
   html = html.replace(/<embed[\s\S]*?>/gi, "");
 
-  html = html.replace(/<\/?([a-zA-Z][a-zA-Z0-9-]*)([^>]*)>/g, (match, rawTag: string, rawAttrs: string) => {
-    const tag = rawTag.toLowerCase();
-    const isClosing = match.startsWith("</");
-    if (!ALLOWED_TAGS.has(tag)) return "";
-    if (isClosing) return `</${tag}>`;
+  const wrapped = `<!DOCTYPE html><html><body>${html}</body></html>`;
+  const { document } = parseHTML(wrapped);
+  const body = document.body;
+
+  // Strip any attributes that linkedom may have parsed onto <body> itself
+  // (e.g. from malformed HTML like `<body onload="...">` embedded in input).
+  for (const attr of Array.from(body.attributes)) {
+    body.removeAttribute(attr.name);
+  }
+
+  const cleanElement = (el: Element) => {
+    const children = Array.from(el.children);
+    for (const child of children) {
+      cleanElement(child);
+    }
+
+    const tag = el.tagName.toLowerCase();
+    if (!ALLOWED_TAGS.has(tag)) {
+      const parent = el.parentNode;
+      if (parent) {
+        while (el.firstChild) {
+          parent.insertBefore(el.firstChild, el);
+        }
+        parent.removeChild(el);
+      }
+      return;
+    }
 
     const attrAllow = ALLOWED_ATTRS[tag];
-    const sanitizedAttrs: string[] = [];
-    if (attrAllow) {
-      const attrRegex = /([a-zA-Z_:][a-zA-Z0-9_.:-]*)\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/g;
-      let attrMatch: RegExpExecArray | null;
-      while ((attrMatch = attrRegex.exec(rawAttrs)) !== null) {
-        const name = attrMatch[1].toLowerCase();
-        if (!attrAllow.has(name)) continue;
-        let value = attrMatch[3] ?? attrMatch[4] ?? attrMatch[5] ?? "";
-        if (URL_ATTRS.has(name) && !isSafeUrl(value)) continue;
-        if (name === "class") {
-          const allowedClasses = CLASS_ALLOWLIST[tag];
-          if (!allowedClasses) continue;
-          const kept = value
-            .split(/\s+/)
-            .filter((c) => allowedClasses.has(c));
-          if (kept.length === 0) continue;
-          value = kept.join(" ");
+    const attributes = Array.from(el.attributes);
+    for (const attr of attributes) {
+      const name = attr.name.toLowerCase();
+      if (!attrAllow || !attrAllow.has(name)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      let value = attr.value;
+      if (URL_ATTRS.has(name)) {
+        if (!isSafeUrl(value)) {
+          el.removeAttribute(attr.name);
+          continue;
         }
-        const safeValue = value
-          .replace(/&/g, "&amp;")
-          .replace(/"/g, "&quot;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-        sanitizedAttrs.push(`${name}="${safeValue}"`);
+      }
+      if (name === "class") {
+        const allowedClasses = CLASS_ALLOWLIST[tag];
+        if (!allowedClasses) {
+          el.removeAttribute(attr.name);
+          continue;
+        }
+        const kept = value
+          .split(/\s+/)
+          .filter((c) => allowedClasses.has(c));
+        if (kept.length === 0) {
+          el.removeAttribute(attr.name);
+        } else {
+          el.setAttribute(attr.name, kept.join(" "));
+        }
       }
     }
-    if (tag === "a") {
-      const hasHref = sanitizedAttrs.some((a) => a.startsWith("href="));
-      if (hasHref) {
-        sanitizedAttrs.push('target="_blank"');
-        sanitizedAttrs.push('rel="noopener noreferrer"');
-      }
-    }
-    if (tag === "img") {
-      sanitizedAttrs.push('loading="lazy"');
-      sanitizedAttrs.push('decoding="async"');
-      sanitizedAttrs.push('referrerpolicy="no-referrer"');
-    }
-    return `<${tag}${sanitizedAttrs.length ? " " + sanitizedAttrs.join(" ") : ""}>`;
-  });
 
-  return html;
+    if (tag === "a") {
+      if (el.hasAttribute("href")) {
+        el.setAttribute("target", "_blank");
+        el.setAttribute("rel", "noopener noreferrer");
+      }
+    } else if (tag === "img") {
+      el.setAttribute("loading", "lazy");
+      el.setAttribute("decoding", "async");
+      el.setAttribute("referrerpolicy", "no-referrer");
+    }
+  };
+
+  const bodyChildren = Array.from(body.children);
+  for (const child of bodyChildren) {
+    cleanElement(child);
+  }
+
+  return body.innerHTML;
 }

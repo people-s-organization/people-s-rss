@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
 import { getAIKey } from "@/app/lib/aiKeyStore";
 import { auth } from "@/auth";
-import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import type { AIStyle } from "@/app/lib/types";
 
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { headers, signal: controller.signal });
+    const res = await safeFetch(url, { headers, signal: controller.signal });
     const text = await res.text();
     if (!res.ok) {
       return NextResponse.json(

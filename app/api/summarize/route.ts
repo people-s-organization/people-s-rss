@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
 import { getAIKey } from "@/app/lib/aiKeyStore";
 import { auth } from "@/auth";
-import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import type { AIStyle } from "@/app/lib/types";
 
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
         ? anthropicRequest(endpoint, apiKey, model, systemPrompt, userPrompt)
         : openaiRequest(endpoint, apiKey, model, systemPrompt, userPrompt);
 
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),

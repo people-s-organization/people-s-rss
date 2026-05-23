@@ -7,7 +7,7 @@ import {
   proxyImagesInDoc,
 } from "@/app/lib/articleHtml";
 import { parseDocument } from "@/app/lib/dom";
-import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import { auth } from "@/auth";
 
@@ -56,7 +56,7 @@ export async function GET(request: Request) {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(target.toString(), {
+    const res = await safeFetch(target.toString(), {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (compatible; PeoplesRSS/1.0; +https://people-s-rss.vercel.app)",
@@ -148,7 +148,7 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
 
 async function extractViaJina(target: URL): Promise<Extracted | null> {
   const mirrorUrl = `${JINA_READER_HOST}${target.protocol}//${target.host}${target.pathname}${target.search}${target.hash}`;
-  const res = await fetch(mirrorUrl, {
+  const res = await safeFetch(mirrorUrl, {
     headers: {
       Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
     },

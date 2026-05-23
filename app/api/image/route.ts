@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
-import { assertPublicHttpUrl, SSRFError } from "@/app/lib/ssrfGuard";
+import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import { auth } from "@/auth";
 
@@ -54,7 +54,7 @@ export async function GET(request: Request) {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(target.toString(), {
+    const res = await safeFetch(target.toString(), {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
