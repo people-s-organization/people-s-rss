@@ -16,7 +16,29 @@ export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
+const JINA_TIMEOUT_MS = 20_000;
 const JINA_READER_HOST = "https://r.jina.ai/";
+
+function isAbortError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    (err.name === "AbortError" || /abort/i.test(err.message))
+  );
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: Parameters<typeof safeFetch>[1],
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await safeFetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function callerIdentity(request: Request, githubId?: string): string {
   if (githubId) return `u:${githubId}`;
@@ -52,52 +74,72 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let extracted: Extracted | null = null;
+  let timedOut = false;
 
+  // 1) Try fetching the page directly and running Readability on it.
   try {
-    const res = await safeFetch(target.toString(), {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; PeoplesRSS/1.0; +https://people-s-rss.vercel.app)",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      signal: controller.signal,
-      redirect: "follow",
-    });
-    const extracted = await extractContent(res, target);
-    if (!extracted) {
-      return NextResponse.json(
-        { error: "Could not extract article body" },
-        { status: 422 },
-      );
-    }
-
-    const cleanHtml = sanitizeHtml(extracted.contentHtml);
-    const text = stripHtml(extracted.contentHtml);
-    return NextResponse.json(
-      {
-        title: extracted.title,
-        byline: extracted.byline,
-        siteName: extracted.siteName,
-        excerpt: extracted.excerpt,
-        length: extracted.length ?? text.length,
-        contentHtml: cleanHtml,
-        contentText: text,
-      },
+    const res = await fetchWithTimeout(
+      target.toString(),
       {
         headers: {
-          "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+          "User-Agent":
+            "Mozilla/5.0 (compatible; PeoplesRSS/1.0; +https://rss.baomi.app)",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         },
+        redirect: "follow",
       },
+      FETCH_TIMEOUT_MS,
     );
+    if (res.ok) {
+      extracted = await parseArticleFromHtml(res, target);
+    }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Extract failed";
-    return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    clearTimeout(timer);
+    if (err instanceof SSRFError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    // A timeout/network failure here is not fatal: fall through to the mirror.
+    timedOut = isAbortError(err);
   }
+
+  // 2) Fallback: the site blocked us, served non-article HTML, failed to parse,
+  // or the direct fetch errored/timed out. Try the text-extraction mirror.
+  if (!extracted) {
+    extracted = await extractViaJina(target).catch(() => null);
+  }
+
+  if (!extracted) {
+    if (timedOut) {
+      return NextResponse.json(
+        { error: "Timed out fetching the article. Please try again." },
+        { status: 504 },
+      );
+    }
+    return NextResponse.json(
+      { error: "Could not extract article body" },
+      { status: 422 },
+    );
+  }
+
+  const cleanHtml = sanitizeHtml(extracted.contentHtml);
+  const text = stripHtml(extracted.contentHtml);
+  return NextResponse.json(
+    {
+      title: extracted.title,
+      byline: extracted.byline,
+      siteName: extracted.siteName,
+      excerpt: extracted.excerpt,
+      length: extracted.length ?? text.length,
+      contentHtml: cleanHtml,
+      contentText: text,
+    },
+    {
+      headers: {
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400",
+      },
+    },
+  );
 }
 
 type Extracted = {
@@ -108,16 +150,6 @@ type Extracted = {
   length?: number;
   contentHtml: string;
 };
-
-async function extractContent(res: Response, target: URL): Promise<Extracted | null> {
-  if (res.ok) {
-    const parsed = await parseArticleFromHtml(res, target);
-    if (parsed) return parsed;
-  }
-  // Some websites block server-side fetches (often with 403/anti-bot). For
-  // those cases, fall back to a text extraction mirror so users can still read.
-  return extractViaJina(target);
-}
 
 async function parseArticleFromHtml(res: Response, target: URL): Promise<Extracted | null> {
   const contentType = (res.headers.get("content-type") || "").toLowerCase();
@@ -148,11 +180,15 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
 
 async function extractViaJina(target: URL): Promise<Extracted | null> {
   const mirrorUrl = `${JINA_READER_HOST}${target.protocol}//${target.host}${target.pathname}${target.search}${target.hash}`;
-  const res = await safeFetch(mirrorUrl, {
-    headers: {
-      Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
+  const res = await fetchWithTimeout(
+    mirrorUrl,
+    {
+      headers: {
+        Accept: "text/plain,text/markdown;q=0.9,*/*;q=0.1",
+      },
     },
-  });
+    JINA_TIMEOUT_MS,
+  );
   if (!res.ok) return null;
   const text = (await res.text()).trim();
   if (!text) return null;
