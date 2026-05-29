@@ -2,8 +2,14 @@
   "name": "People's RSS",
   "status": "released",
   "icon": "icon.svg",
-  "accent": { "from": "#38bdf8", "to": "#6366f1" },
-  "platform": { "en": "Web", "zh": "网页" },
+  "accent": {
+    "from": "#4ade80",
+    "to": "#16a34a"
+  },
+  "platform": {
+    "en": "Web",
+    "zh": "网页"
+  },
   "tagline": {
     "en": "A minimal RSS / Atom reader on Vercel, with bring-your-own-key AI summaries.",
     "zh": "运行在 Vercel 上的极简 RSS / Atom 阅读器，用你自己的 Key 生成 AI 摘要。"
@@ -28,14 +34,25 @@
       "内置图片代理、SSRF 防护与限流"
     ]
   },
-  "tech": ["Next.js 16", "TypeScript", "Tailwind CSS", "Upstash Redis"],
+  "tech": [
+    "Next.js 16",
+    "TypeScript",
+    "Tailwind CSS",
+    "Upstash Redis"
+  ],
   "links": [
     {
-      "label": { "en": "Open app", "zh": "打开应用" },
+      "label": {
+        "en": "Open app",
+        "zh": "打开应用"
+      },
       "href": "https://rss.baomi.app"
     },
     {
-      "label": { "en": "GitHub", "zh": "GitHub" },
+      "label": {
+        "en": "GitHub",
+        "zh": "GitHub"
+      },
       "href": "https://github.com/people-s-organization/people-s-rss"
     }
   ]
