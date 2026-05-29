@@ -2,6 +2,7 @@
   "name": "People's RSS",
   "status": "released",
   "icon": "icon.svg",
+  "accent": { "from": "#38bdf8", "to": "#6366f1" },
   "platform": { "en": "Web", "zh": "网页" },
   "tagline": {
     "en": "A minimal RSS / Atom reader on Vercel, with bring-your-own-key AI summaries.",
