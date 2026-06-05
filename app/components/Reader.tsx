@@ -1198,25 +1198,6 @@ export function Reader() {
                     {t("openOriginal")} ↗
                   </a>
                   <button
-                    onClick={() => handleSummarize(selectedArticle)}
-                    disabled={summarizing === selectedArticle.id}
-                    className="text-sm rounded bg-accent px-3 py-1 text-white disabled:opacity-50"
-                  >
-                    {summarizing === selectedArticle.id
-                      ? t("summarizing")
-                      : selectedSummary
-                        ? t("resummarize")
-                        : t("summarizeAction")}
-                  </button>
-                  <SummaryLanguageToggle
-                    activeMode={selectedSummaryLanguage}
-                    primaryMode={selectedPrimarySummaryLanguage}
-                    locale={locale}
-                    onChange={(mode) =>
-                      handleSummaryLanguageChange(selectedArticle.id, mode)
-                    }
-                  />
-                  <button
                     onClick={() => handleExtractFull(selectedArticle)}
                     disabled={
                       extracting === selectedArticle.id || !selectedArticle.link
@@ -1234,6 +1215,18 @@ export function Reader() {
                     {extracting === selectedArticle.id ? "…" : "📖"}
                   </button>
                 </div>
+                <SummaryActionGroup
+                  className="mt-3"
+                  hasSummary={!!selectedSummary}
+                  summarizing={summarizing === selectedArticle.id}
+                  onSummarize={() => handleSummarize(selectedArticle)}
+                  activeMode={selectedSummaryLanguage}
+                  primaryMode={selectedPrimarySummaryLanguage}
+                  locale={locale}
+                  onLanguageChange={(mode) =>
+                    handleSummaryLanguageChange(selectedArticle.id, mode)
+                  }
+                />
                 {summaryError && (
                   <p className="text-sm text-red-500 mt-2">{summaryError}</p>
                 )}
@@ -1249,6 +1242,12 @@ export function Reader() {
                       locale,
                       t,
                     )}
+                    activeMode={selectedSummaryLanguage}
+                    primaryMode={selectedPrimarySummaryLanguage}
+                    locale={locale}
+                    onLanguageChange={(mode) =>
+                      handleSummaryLanguageChange(selectedArticle.id, mode)
+                    }
                   />
                 )}
               </div>
@@ -1755,25 +1754,37 @@ function SummaryLanguageToggle({
   primaryMode,
   locale,
   onChange,
+  tone = "neutral",
+  className = "",
 }: {
   activeMode: SummaryLanguage;
   primaryMode: SummaryLanguage;
   locale: string;
   onChange: (mode: SummaryLanguage) => void;
+  tone?: "neutral" | "accent";
+  className?: string;
 }) {
   const t = useTranslations("Reader");
   const activeKey = summaryLanguageCachePart(activeMode, locale);
   const primaryKey = summaryLanguageCachePart(primaryMode, locale);
+  const base =
+    tone === "accent"
+      ? "border-accent/30 bg-background/70"
+      : "border-border";
+  const active =
+    tone === "accent"
+      ? "bg-accent text-white"
+      : "bg-foreground text-background";
   return (
     <div
-      className="flex items-center rounded border border-border overflow-hidden text-xs shrink-0"
+      className={`flex items-center rounded border overflow-hidden text-xs shrink-0 ${base} ${className}`}
       aria-label={t("summaryLanguageToggleLabel")}
     >
       <button
         onClick={() => onChange(primaryMode)}
         className={`px-2 py-1 ${
           activeMode !== "source" && activeKey === primaryKey
-            ? "bg-foreground text-background"
+            ? active
             : "hover:bg-muted"
         }`}
       >
@@ -1783,7 +1794,7 @@ function SummaryLanguageToggle({
         onClick={() => onChange("source")}
         className={`px-2 py-1 ${
           activeMode === "source"
-            ? "bg-foreground text-background"
+            ? active
             : "hover:bg-muted"
         }`}
       >
@@ -1793,30 +1804,100 @@ function SummaryLanguageToggle({
   );
 }
 
+function SummaryActionGroup({
+  className = "",
+  hasSummary,
+  summarizing,
+  onSummarize,
+  activeMode,
+  primaryMode,
+  locale,
+  onLanguageChange,
+}: {
+  className?: string;
+  hasSummary: boolean;
+  summarizing: boolean;
+  onSummarize: () => void;
+  activeMode: SummaryLanguage;
+  primaryMode: SummaryLanguage;
+  locale: string;
+  onLanguageChange: (mode: SummaryLanguage) => void;
+}) {
+  const t = useTranslations("Reader");
+  return (
+    <div
+      className={`inline-flex max-w-full flex-wrap items-center gap-2 rounded-md border border-accent/30 bg-accent/5 p-1 ${className}`}
+    >
+      <button
+        onClick={onSummarize}
+        disabled={summarizing}
+        className="rounded bg-accent px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+      >
+        {summarizing
+          ? t("summarizing")
+          : hasSummary
+            ? t("resummarize")
+            : t("summarizeAction")}
+      </button>
+      {!hasSummary && (
+        <SummaryLanguageToggle
+          activeMode={activeMode}
+          primaryMode={primaryMode}
+          locale={locale}
+          onChange={onLanguageChange}
+          tone="accent"
+        />
+      )}
+    </div>
+  );
+}
+
 function SummaryCard({
   text,
   sourceLabel,
   targetLabel,
+  activeMode,
+  primaryMode,
+  locale,
+  onLanguageChange,
 }: {
   text: string;
   sourceLabel?: string;
   targetLabel?: string;
+  activeMode?: SummaryLanguage;
+  primaryMode?: SummaryLanguage;
+  locale?: string;
+  onLanguageChange?: (mode: SummaryLanguage) => void;
 }) {
   const blocks = useMemo(() => parseSummary(text), [text]);
   const t = useTranslations("Reader");
+  const showLanguageToggle =
+    !!activeMode && !!primaryMode && !!locale && !!onLanguageChange;
   return (
     <div className="mt-4 relative overflow-hidden rounded-xl border border-accent/30 bg-gradient-to-br from-accent/10 via-accent/5 to-transparent">
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_right,var(--accent),transparent_40%)] opacity-10" />
       <div className="relative px-5 py-4">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent/15 text-accent">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M12 2l1.84 5.66h5.95l-4.81 3.5 1.84 5.66L12 13.31 7.18 16.82 9.02 11.16 4.21 7.66h5.95L12 2z"/>
-            </svg>
-          </span>
-          <div className="text-xs font-semibold uppercase tracking-wider text-accent">
-            {t("aiSummaryLabel")}
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-accent/15 text-accent shrink-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M12 2l1.84 5.66h5.95l-4.81 3.5 1.84 5.66L12 13.31 7.18 16.82 9.02 11.16 4.21 7.66h5.95L12 2z"/>
+              </svg>
+            </span>
+            <div className="text-xs font-semibold uppercase tracking-wider text-accent">
+              {t("aiSummaryLabel")}
+            </div>
           </div>
+          {showLanguageToggle && (
+            <SummaryLanguageToggle
+              activeMode={activeMode}
+              primaryMode={primaryMode}
+              locale={locale}
+              onChange={onLanguageChange}
+              tone="accent"
+              className="ml-auto"
+            />
+          )}
         </div>
         {sourceLabel && targetLabel && (
           <div className="text-[11px] opacity-60 mb-3">
@@ -2402,19 +2483,6 @@ function MobileReader({
         >
           {extracting ? "…" : "📖"}
         </button>
-        <button
-          onClick={onSummarize}
-          disabled={summarizing}
-          className="text-xs rounded bg-accent px-2 py-1 text-white disabled:opacity-50"
-        >
-          {summarizing ? "…" : "✨"}
-        </button>
-        <SummaryLanguageToggle
-          activeMode={summaryLanguage}
-          primaryMode={primarySummaryLanguage}
-          locale={locale}
-          onChange={onSummaryLanguageChange}
-        />
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <h1 className="text-xl font-semibold leading-tight mb-2">
@@ -2429,6 +2497,16 @@ function MobileReader({
             </>
           )}
         </div>
+        <SummaryActionGroup
+          className="mb-3"
+          hasSummary={!!summary}
+          summarizing={summarizing}
+          onSummarize={onSummarize}
+          activeMode={summaryLanguage}
+          primaryMode={primarySummaryLanguage}
+          locale={locale}
+          onLanguageChange={onSummaryLanguageChange}
+        />
         {summaryError && (
           <p className="text-sm text-red-500 mb-3">{summaryError}</p>
         )}
@@ -2447,6 +2525,10 @@ function MobileReader({
               text={summary}
               sourceLabel={detectSourceLanguage(article, t)}
               targetLabel={summaryLanguageDisplayName(summaryLanguage, locale, t)}
+              activeMode={summaryLanguage}
+              primaryMode={primarySummaryLanguage}
+              locale={locale}
+              onLanguageChange={onSummaryLanguageChange}
             />
           </div>
         )}
