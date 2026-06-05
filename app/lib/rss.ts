@@ -334,7 +334,7 @@ export function sanitizeHtml(input: string): string {
         el.removeAttribute(attr.name);
         continue;
       }
-      let value = attr.value;
+      const value = attr.value;
       if (URL_ATTRS.has(name)) {
         if (!isSafeUrl(value)) {
           el.removeAttribute(attr.name);

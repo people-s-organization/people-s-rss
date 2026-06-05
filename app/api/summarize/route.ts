@@ -78,11 +78,25 @@ export async function POST(request: Request) {
   if (!content) {
     return NextResponse.json({ error: "Empty content" }, { status: 400 });
   }
-  const rawLang = body.language?.trim() ?? "";
-  const language = rawLang
-    ? rawLang.replace(/[\r\n]+/g, " ").slice(0, 50)
-    : "the same language as the article";
-  const systemPrompt = `You summarize RSS articles. Reply in ${language}. Produce 3-6 concise bullet points capturing key facts, conclusions, and any numbers. No preamble.`;
+  const targetLanguage = normalizeTargetLanguage(body.language);
+  const languageInstruction = targetLanguage
+    ? [
+        `Reply only in ${targetLanguage}, regardless of the article's original language.`,
+        targetLanguage === "Simplified Chinese"
+          ? "Use natural Simplified Chinese."
+          : null,
+        "Keep names of people, companies, products, papers, code identifiers, and technical terms in their original form when useful.",
+        "Add a brief translated explanation in parentheses only when it improves clarity.",
+      ]
+        .filter(Boolean)
+        .join(" ")
+    : "Reply in the same language as the article.";
+  const systemPrompt = [
+    "You summarize RSS articles.",
+    languageInstruction,
+    "Produce 3-6 concise bullet points capturing key facts, conclusions, and any numbers.",
+    "No preamble.",
+  ].join(" ");
   const userPrompt = [
     body.title ? `Title: ${body.title}` : null,
     body.url ? `URL: ${body.url}` : null,
@@ -189,6 +203,19 @@ function anthropicRequest(
     messages: [{ role: "user", content: userPrompt }],
   };
   return { url, headers, payload, parseSummary: parseAnthropic };
+}
+
+function normalizeTargetLanguage(
+  language: string | undefined,
+): "Simplified Chinese" | "English" | null {
+  const value = language?.trim().toLowerCase();
+  if (!value || value === "source" || value === "original") return null;
+  if (value === "zh" || value === "zh-cn" || value === "chinese") {
+    return "Simplified Chinese";
+  }
+  if (value === "simplified chinese") return "Simplified Chinese";
+  if (value === "en" || value === "english") return "English";
+  return null;
 }
 
 function parseOpenAI(json: unknown): string | undefined {

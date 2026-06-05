@@ -4,7 +4,7 @@ import { useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useTranslations, useLocale } from "next-intl";
 import { useRouter, usePathname } from "next/navigation";
-import type { AIConfig, AIStyle, Feed } from "@/app/lib/types";
+import type { AIConfig, AIStyle, Feed, SummaryLanguage } from "@/app/lib/types";
 import { defaultEndpoint, detectStyle } from "@/app/lib/aiProviders";
 
 type Props = {
@@ -57,6 +57,9 @@ function SettingsDialogBody({
   );
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [model, setModel] = useState(aiConfig?.model ?? "");
+  const [summaryLanguage, setSummaryLanguage] = useState<SummaryLanguage>(
+    aiConfig?.summaryLanguage ?? "ui",
+  );
   const [models, setModels] = useState<{ id: string; label?: string }[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -164,6 +167,7 @@ function SettingsDialogBody({
         endpoint: endpoint.trim(),
         model: model.trim(),
         style,
+        summaryLanguage,
       });
       setApiKeyDraft("");
       onClose();
@@ -184,6 +188,7 @@ function SettingsDialogBody({
       setEndpoint(defaultEndpoint("openai"));
       setApiKeyDraft("");
       setModel("");
+      setSummaryLanguage("ui");
       setModels([]);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : t("clearFailedDefault"));
@@ -392,6 +397,27 @@ function SettingsDialogBody({
                     {t("modelsLoaded", { n: models.length })}
                   </p>
                 )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium block mb-1">
+                  {t("summaryLanguageLabel")}
+                </label>
+                <select
+                  value={summaryLanguage}
+                  onChange={(e) =>
+                    setSummaryLanguage(e.target.value as SummaryLanguage)
+                  }
+                  className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent/60"
+                >
+                  <option value="ui">{t("summaryLanguageUi")}</option>
+                  <option value="zh">{t("summaryLanguageZh")}</option>
+                  <option value="en">{t("summaryLanguageEn")}</option>
+                  <option value="source">{t("summaryLanguageSource")}</option>
+                </select>
+                <p className="text-xs opacity-60 mt-1">
+                  {t("summaryLanguageHelp")}
+                </p>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">

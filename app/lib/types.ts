@@ -22,10 +22,13 @@ export type Article = {
 
 export type AIStyle = "openai" | "anthropic";
 
+export type SummaryLanguage = "ui" | "zh" | "en" | "source";
+
 export type AIConfig = {
   endpoint: string;
   model: string;
   style: AIStyle;
+  summaryLanguage: SummaryLanguage;
 };
 
 export type ParsedFeed = {

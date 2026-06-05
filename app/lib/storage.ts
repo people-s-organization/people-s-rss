@@ -1,6 +1,6 @@
 "use client";
 
-import type { AIConfig, Article, Feed } from "./types";
+import type { AIConfig, Article, Feed, SummaryLanguage } from "./types";
 
 const FEEDS_KEY = "prss:feeds";
 const AI_KEY = "prss:ai";
@@ -14,6 +14,10 @@ type FeedCacheEntry = {
   articles: Article[];
   fetchedAt: number;
 };
+
+function isSummaryLanguage(value: unknown): value is SummaryLanguage {
+  return value === "ui" || value === "zh" || value === "en" || value === "source";
+}
 
 export function loadFeedCache(): Record<string, FeedCacheEntry> {
   if (typeof window === "undefined") return {};
@@ -105,13 +109,21 @@ export function loadAIConfig(): AIConfig | null {
         parsed.style === "anthropic" || parsed.style === "openai"
           ? parsed.style
           : "openai";
+      const summaryLanguage = isSummaryLanguage(parsed.summaryLanguage)
+        ? parsed.summaryLanguage
+        : "ui";
       const cfg: AIConfig = {
         endpoint: parsed.endpoint,
         model: parsed.model,
         style,
+        summaryLanguage,
       };
       // Scrub any legacy apiKey field left in localStorage from older builds.
-      if (typeof parsed.apiKey === "string") {
+      if (
+        typeof parsed.apiKey === "string" ||
+        parsed.style !== style ||
+        parsed.summaryLanguage !== summaryLanguage
+      ) {
         window.localStorage.setItem(AI_KEY, JSON.stringify(cfg));
       }
       return cfg;
@@ -132,6 +144,7 @@ export function saveAIConfig(cfg: AIConfig | null) {
     endpoint: cfg.endpoint,
     model: cfg.model,
     style: cfg.style,
+    summaryLanguage: cfg.summaryLanguage ?? "ui",
   };
   window.localStorage.setItem(AI_KEY, JSON.stringify(stripped));
 }

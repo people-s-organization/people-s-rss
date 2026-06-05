@@ -2,8 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { useTranslations } from "next-intl";
-import type { AIConfig, Article, Feed, ParsedFeed } from "@/app/lib/types";
+import { useLocale, useTranslations } from "next-intl";
+import type {
+  AIConfig,
+  Article,
+  Feed,
+  ParsedFeed,
+  SummaryLanguage,
+} from "@/app/lib/types";
 import { usePullGestures } from "@/app/lib/usePullToRefresh";
 import {
   isInitialized,
@@ -68,6 +74,9 @@ export function Reader() {
   const [summaries, setSummaries] = useState<Record<string, string>>({});
   const [summarizing, setSummarizing] = useState<string | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryLanguageOverrides, setSummaryLanguageOverrides] = useState<
+    Record<string, SummaryLanguage>
+  >({});
   const [fullContent, setFullContent] = useState<Record<string, string>>({});
   const [fullContentText, setFullContentText] = useState<Record<string, string>>({});
   const [extracting, setExtracting] = useState<string | null>(null);
@@ -88,6 +97,7 @@ export function Reader() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ state: "off" });
   const [hasAIKey, setHasAIKey] = useState(false);
   const t = useTranslations("Reader");
+  const locale = useLocale();
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -534,6 +544,24 @@ export function Reader() {
     () => visibleArticles.find((a) => a.id === selectedArticleId) ?? null,
     [visibleArticles, selectedArticleId],
   );
+  const selectedSummaryLanguage: SummaryLanguage = selectedArticle
+    ? summaryLanguageOverrides[selectedArticle.id] ??
+      aiConfig?.summaryLanguage ??
+      "ui"
+    : aiConfig?.summaryLanguage ?? "ui";
+  const selectedSummaryKey = selectedArticle
+    ? summaryStorageKey(selectedArticle.id, selectedSummaryLanguage, locale)
+    : null;
+  const selectedSummary =
+    selectedArticle && selectedSummaryKey
+      ? summaries[selectedSummaryKey] ??
+        (selectedSummaryLanguage === "source"
+          ? summaries[selectedArticle.id]
+          : undefined)
+      : undefined;
+  const selectedPrimarySummaryLanguage = primarySummaryLanguage(
+    aiConfig?.summaryLanguage ?? "ui",
+  );
 
   useEffect(() => {
     if (!selectedArticle) return;
@@ -663,6 +691,11 @@ export function Reader() {
     saveRead(next);
   }
 
+  function handleSummaryLanguageChange(articleId: string, mode: SummaryLanguage) {
+    setSummaryLanguageOverrides((prev) => ({ ...prev, [articleId]: mode }));
+    setSummaryError(null);
+  }
+
   async function handleExtractFull(article: Article) {
     if (!article.link) return;
     setExtracting(article.id);
@@ -740,6 +773,9 @@ export function Reader() {
         );
         body = body.slice(0, MAX_SUMMARY_INPUT);
       }
+      const languageMode =
+        summaryLanguageOverrides[article.id] ?? aiConfig.summaryLanguage ?? "ui";
+      const requestLanguage = summaryRequestLanguage(languageMode, locale);
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -750,6 +786,7 @@ export function Reader() {
           title: article.title,
           url: article.link,
           content: body,
+          language: requestLanguage ?? "source",
         }),
       });
       const data = await readApiJson<{ summary?: string }>(res);
@@ -757,7 +794,8 @@ export function Reader() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       setSummaries((prev) => {
-        const next = { ...prev, [article.id]: data.summary! };
+        const key = summaryStorageKey(article.id, languageMode, locale);
+        const next = { ...prev, [key]: data.summary! };
         saveSummaries(next);
         return next;
       });
@@ -1166,10 +1204,18 @@ export function Reader() {
                   >
                     {summarizing === selectedArticle.id
                       ? t("summarizing")
-                      : summaries[selectedArticle.id]
+                      : selectedSummary
                         ? t("resummarize")
                         : t("summarizeAction")}
                   </button>
+                  <SummaryLanguageToggle
+                    activeMode={selectedSummaryLanguage}
+                    primaryMode={selectedPrimarySummaryLanguage}
+                    locale={locale}
+                    onChange={(mode) =>
+                      handleSummaryLanguageChange(selectedArticle.id, mode)
+                    }
+                  />
                   <button
                     onClick={() => handleExtractFull(selectedArticle)}
                     disabled={
@@ -1194,8 +1240,16 @@ export function Reader() {
                 {extractError && (
                   <p className="text-sm text-red-500 mt-2">{extractError}</p>
                 )}
-                {summaries[selectedArticle.id] && (
-                  <SummaryCard text={summaries[selectedArticle.id]!} />
+                {selectedSummary && (
+                  <SummaryCard
+                    text={selectedSummary}
+                    sourceLabel={detectSourceLanguage(selectedArticle, t)}
+                    targetLabel={summaryLanguageDisplayName(
+                      selectedSummaryLanguage,
+                      locale,
+                      t,
+                    )}
+                  />
                 )}
               </div>
             </header>
@@ -1266,10 +1320,16 @@ export function Reader() {
         <MobileReader
           article={selectedArticle}
           onClose={() => setSelectedArticleId(null)}
-          summary={summaries[selectedArticle.id]}
+          summary={selectedSummary}
+          summaryLanguage={selectedSummaryLanguage}
+          primarySummaryLanguage={selectedPrimarySummaryLanguage}
+          locale={locale}
           summarizing={summarizing === selectedArticle.id}
           summaryError={summaryError}
           onSummarize={() => handleSummarize(selectedArticle)}
+          onSummaryLanguageChange={(mode) =>
+            handleSummaryLanguageChange(selectedArticle.id, mode)
+          }
           fullHtml={fullContent[selectedArticle.id]}
           extracting={extracting === selectedArticle.id}
           extractError={extractError}
@@ -1639,7 +1699,109 @@ function renderInline(text: string): React.ReactNode {
   return parts.length === 0 ? text : parts;
 }
 
-function SummaryCard({ text }: { text: string }) {
+function summaryStorageKey(
+  articleId: string,
+  mode: SummaryLanguage,
+  locale: string,
+): string {
+  return `${articleId}::summary:${summaryLanguageCachePart(mode, locale)}`;
+}
+
+function summaryLanguageCachePart(
+  mode: SummaryLanguage,
+  locale: string,
+): string {
+  if (mode === "source") return "source";
+  if (mode === "zh" || mode === "en") return mode;
+  return locale === "zh" ? "zh" : "en";
+}
+
+function summaryRequestLanguage(
+  mode: SummaryLanguage,
+  locale: string,
+): "Simplified Chinese" | "English" | null {
+  const key = summaryLanguageCachePart(mode, locale);
+  if (key === "zh") return "Simplified Chinese";
+  if (key === "en") return "English";
+  return null;
+}
+
+function primarySummaryLanguage(mode: SummaryLanguage): SummaryLanguage {
+  return mode === "source" ? "ui" : mode;
+}
+
+function summaryLanguageDisplayName(
+  mode: SummaryLanguage,
+  locale: string,
+  t: ReaderT,
+): string {
+  const key = summaryLanguageCachePart(mode, locale);
+  if (key === "zh") return t("summaryLanguageZh");
+  if (key === "en") return t("summaryLanguageEn");
+  return t("summaryLanguageSource");
+}
+
+function detectSourceLanguage(article: Article, t: ReaderT): string {
+  const sample = `${article.title}\n${article.contentText ?? ""}`.slice(0, 1200);
+  const cjk = sample.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  const latin = sample.match(/[A-Za-z]/g)?.length ?? 0;
+  if (cjk >= 6 && cjk >= latin * 0.2) return t("summaryLanguageZh");
+  if (latin >= 24) return t("summaryLanguageEn");
+  return t("summaryLanguageSource");
+}
+
+function SummaryLanguageToggle({
+  activeMode,
+  primaryMode,
+  locale,
+  onChange,
+}: {
+  activeMode: SummaryLanguage;
+  primaryMode: SummaryLanguage;
+  locale: string;
+  onChange: (mode: SummaryLanguage) => void;
+}) {
+  const t = useTranslations("Reader");
+  const activeKey = summaryLanguageCachePart(activeMode, locale);
+  const primaryKey = summaryLanguageCachePart(primaryMode, locale);
+  return (
+    <div
+      className="flex items-center rounded border border-border overflow-hidden text-xs shrink-0"
+      aria-label={t("summaryLanguageToggleLabel")}
+    >
+      <button
+        onClick={() => onChange(primaryMode)}
+        className={`px-2 py-1 ${
+          activeMode !== "source" && activeKey === primaryKey
+            ? "bg-foreground text-background"
+            : "hover:bg-muted"
+        }`}
+      >
+        {summaryLanguageDisplayName(primaryMode, locale, t)}
+      </button>
+      <button
+        onClick={() => onChange("source")}
+        className={`px-2 py-1 ${
+          activeMode === "source"
+            ? "bg-foreground text-background"
+            : "hover:bg-muted"
+        }`}
+      >
+        {t("summaryLanguageSourceShort")}
+      </button>
+    </div>
+  );
+}
+
+function SummaryCard({
+  text,
+  sourceLabel,
+  targetLabel,
+}: {
+  text: string;
+  sourceLabel?: string;
+  targetLabel?: string;
+}) {
   const blocks = useMemo(() => parseSummary(text), [text]);
   const t = useTranslations("Reader");
   return (
@@ -1656,6 +1818,14 @@ function SummaryCard({ text }: { text: string }) {
             {t("aiSummaryLabel")}
           </div>
         </div>
+        {sourceLabel && targetLabel && (
+          <div className="text-[11px] opacity-60 mb-3">
+            {t("summaryLanguageMeta", {
+              source: sourceLabel,
+              target: targetLabel,
+            })}
+          </div>
+        )}
         <div className="text-sm leading-relaxed space-y-2.5">
           {blocks.map((block, bi) => {
             if (block.kind === "p") {
@@ -2178,9 +2348,13 @@ function MobileReader({
   article,
   onClose,
   summary,
+  summaryLanguage,
+  primarySummaryLanguage,
+  locale,
   summarizing,
   summaryError,
   onSummarize,
+  onSummaryLanguageChange,
   fullHtml,
   extracting,
   extractError,
@@ -2189,9 +2363,13 @@ function MobileReader({
   article: Article;
   onClose: () => void;
   summary?: string;
+  summaryLanguage: SummaryLanguage;
+  primarySummaryLanguage: SummaryLanguage;
+  locale: string;
   summarizing: boolean;
   summaryError: string | null;
   onSummarize: () => void;
+  onSummaryLanguageChange: (mode: SummaryLanguage) => void;
   fullHtml?: string;
   extracting: boolean;
   extractError: string | null;
@@ -2231,6 +2409,12 @@ function MobileReader({
         >
           {summarizing ? "…" : "✨"}
         </button>
+        <SummaryLanguageToggle
+          activeMode={summaryLanguage}
+          primaryMode={primarySummaryLanguage}
+          locale={locale}
+          onChange={onSummaryLanguageChange}
+        />
       </div>
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <h1 className="text-xl font-semibold leading-tight mb-2">
@@ -2259,7 +2443,11 @@ function MobileReader({
         )}
         {summary && (
           <div className="mb-4">
-            <SummaryCard text={summary} />
+            <SummaryCard
+              text={summary}
+              sourceLabel={detectSourceLanguage(article, t)}
+              targetLabel={summaryLanguageDisplayName(summaryLanguage, locale, t)}
+            />
           </div>
         )}
         <div className="prose-content">
