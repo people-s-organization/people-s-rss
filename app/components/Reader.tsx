@@ -37,6 +37,7 @@ const DEFAULT_FEEDS: { url: string; title: string; category?: string }[] = [
 import { SettingsDialog } from "./SettingsDialog";
 
 const FEED_FULL_THRESHOLD = 1500;
+const SYNC_POLL_MS = 12_000;
 
 type FeedState =
   | { status: "idle" }
@@ -97,6 +98,9 @@ export function Reader() {
   const locale = useLocale();
   const syncReady = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const remoteUpdatedAtRef = useRef<number | null>(null);
+  const suppressNextPushRef = useRef(false);
+  const pushingRef = useRef(false);
 
   useEffect(() => {
     let initialFeeds = loadFeeds();
@@ -201,6 +205,7 @@ export function Reader() {
     nextRead: Set<string>,
     nextAI: AIConfig | null,
   ) {
+    pushingRef.current = true;
     setSyncStatus({ state: "syncing" });
     try {
       const res = await fetch("/api/sync", {
@@ -210,25 +215,80 @@ export function Reader() {
           feeds: nextFeeds,
           read: Array.from(nextRead),
           ai: nextAI,
+          baseUpdatedAt: remoteUpdatedAtRef.current,
         }),
       });
-      const data = await readApiJson<{ updatedAt?: number }>(res);
+      const data = await readApiJson<{
+        updatedAt?: number;
+        blob?: SyncBlob | null;
+      }>(res);
+      if (res.status === 409 && data.blob) {
+        const remote = data.blob;
+        const remoteRead = new Set(remote.read ?? []);
+        const mergedRead = new Set<string>([...nextRead, ...remoteRead]);
+        const mergedAI = remote.ai ?? nextAI;
+        applyRemoteBlob(remote, mergedRead, mergedAI);
+        if (mergedRead.size > remoteRead.size) {
+          await pushBlob(remote.feeds ?? [], mergedRead, mergedAI);
+        }
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      remoteUpdatedAtRef.current = data.updatedAt ?? Date.now();
       setSyncStatus({
         state: "idle",
-        updatedAt: data.updatedAt ?? Date.now(),
+        updatedAt: remoteUpdatedAtRef.current,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Sync failed";
       setSyncStatus({ state: "error", error: message });
+    } finally {
+      pushingRef.current = false;
     }
   }
 
-  // Pull from server on sign-in, merge with local
+  function applyRemoteBlob(
+    remote: SyncBlob,
+    nextRead: Set<string>,
+    nextAI: AIConfig | null,
+  ) {
+    const nextFeeds = remote.feeds ?? [];
+    const feedIds = new Set(nextFeeds.map((f) => f.id));
+    suppressNextPushRef.current = true;
+    remoteUpdatedAtRef.current = remote.updatedAt ?? Date.now();
+    setFeeds(nextFeeds);
+    setReadSet(nextRead);
+    setAIConfig(nextAI);
+    setFeedStates((prev) => {
+      const next: Record<string, FeedState> = {};
+      for (const f of nextFeeds) {
+        const state = prev[f.id];
+        if (state) next[f.id] = state;
+      }
+      return next;
+    });
+    setSelectedFeedId((prev) => {
+      if (prev === "all") return prev;
+      if (prev.startsWith("cat:")) {
+        const cat = prev.slice(4);
+        return nextFeeds.some((f) => (f.category ?? "") === cat) ? prev : "all";
+      }
+      return feedIds.has(prev) ? prev : "all";
+    });
+    saveFeeds(nextFeeds);
+    saveRead(nextRead);
+    saveAIConfig(nextAI);
+    setSyncStatus({ state: "idle", updatedAt: remoteUpdatedAtRef.current });
+  }
+
+  // Pull from server on sign-in. Remote feeds are authoritative so deletions
+  // from another device do not get reintroduced by stale local storage.
   useEffect(() => {
     if (!hydrated) return;
     if (authStatus !== "authenticated") {
       syncReady.current = false;
+      remoteUpdatedAtRef.current = null;
+      suppressNextPushRef.current = false;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- reset sync state on sign-out
       setSyncStatus({ state: "off" });
       return;
@@ -242,24 +302,23 @@ export function Reader() {
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         if (cancelled) return;
         const remote = data.blob;
-        const localFeeds = loadFeeds();
         const localRead = loadRead();
         const localAI = loadAIConfig();
-        const mergedFeeds = mergeFeeds(localFeeds, remote?.feeds ?? []);
-        const mergedRead = new Set<string>([
-          ...localRead,
-          ...(remote?.read ?? []),
-        ]);
-        const mergedAI = remote?.ai ?? localAI;
-        setFeeds(mergedFeeds);
-        setReadSet(mergedRead);
-        setAIConfig(mergedAI);
-        saveFeeds(mergedFeeds);
-        saveRead(mergedRead);
-        saveAIConfig(mergedAI);
         syncReady.current = true;
-        setSyncStatus({ state: "idle", updatedAt: remote?.updatedAt ?? null });
-        void pushBlob(mergedFeeds, mergedRead, mergedAI);
+        if (remote) {
+          const remoteRead = new Set(remote.read ?? []);
+          const mergedRead = new Set<string>([...localRead, ...remoteRead]);
+          const mergedAI = remote.ai ?? localAI;
+          applyRemoteBlob(remote, mergedRead, mergedAI);
+          if (mergedRead.size > remoteRead.size) {
+            void pushBlob(remote.feeds ?? [], mergedRead, mergedAI);
+          }
+        } else {
+          const localFeeds = loadFeeds();
+          remoteUpdatedAtRef.current = null;
+          setSyncStatus({ state: "idle", updatedAt: null });
+          void pushBlob(localFeeds, localRead, localAI);
+        }
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : "Sync failed";
@@ -274,6 +333,10 @@ export function Reader() {
   // Debounced push on any change after initial sync
   useEffect(() => {
     if (!syncReady.current) return;
+    if (suppressNextPushRef.current) {
+      suppressNextPushRef.current = false;
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       void pushBlob(feeds, readSet, aiConfig);
@@ -282,6 +345,53 @@ export function Reader() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [feeds, readSet, aiConfig]);
+
+  // Keep already-open tabs roughly in sync with changes pushed elsewhere.
+  useEffect(() => {
+    if (!hydrated || authStatus !== "authenticated") return;
+    let cancelled = false;
+
+    async function pullRemoteChanges() {
+      if (!syncReady.current) return;
+      if (debounceRef.current || pushingRef.current) return;
+      try {
+        const res = await fetch("/api/sync", { cache: "no-store" });
+        const data = await readApiJson<{ blob?: SyncBlob | null }>(res);
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        if (cancelled || !data.blob) return;
+        const remote = data.blob;
+        const remoteUpdatedAt = remote.updatedAt ?? 0;
+        const lastRemoteUpdatedAt = remoteUpdatedAtRef.current ?? 0;
+        if (remoteUpdatedAt <= lastRemoteUpdatedAt) return;
+
+        const localRead = loadRead();
+        const remoteRead = new Set(remote.read ?? []);
+        const mergedRead = new Set<string>([...localRead, ...remoteRead]);
+        const nextAI = remote.ai ?? loadAIConfig();
+        applyRemoteBlob(remote, mergedRead, nextAI);
+        if (mergedRead.size > remoteRead.size) {
+          void pushBlob(remote.feeds ?? [], mergedRead, nextAI);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : "Sync failed";
+        setSyncStatus({ state: "error", error: message });
+      }
+    }
+
+    const id = window.setInterval(() => {
+      void pullRemoteChanges();
+    }, SYNC_POLL_MS);
+    window.addEventListener("focus", pullRemoteChanges);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener("focus", pullRemoteChanges);
+    };
+    // applyRemoteBlob and pushBlob intentionally read current local storage/state
+    // on each tick; adding them here would reset the interval on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, hydrated]);
 
   // Track whether the server has a stored AI key for this user
   useEffect(() => {
@@ -677,7 +787,7 @@ export function Reader() {
 
   function markAllRead() {
     const next = new Set(readSet);
-    for (const a of visibleArticles) next.add(a.id);
+    for (const a of fullVisibleArticles) next.add(a.id);
     setReadSet(next);
     saveRead(next);
   }
@@ -2250,24 +2360,6 @@ function formatRelative(ts: number, t: ReaderT): string {
   if (diff < 3_600_000) return t("minutesAgo", { n: Math.floor(diff / 60_000) });
   if (diff < 86_400_000) return t("hoursAgo", { n: Math.floor(diff / 3_600_000) });
   return new Date(ts).toLocaleDateString();
-}
-
-function mergeFeeds(local: Feed[], remote: Feed[]): Feed[] {
-  const byUrl = new Map<string, Feed>();
-  for (const f of local) byUrl.set(f.url, f);
-  for (const f of remote) {
-    const existing = byUrl.get(f.url);
-    if (existing) {
-      byUrl.set(f.url, {
-        ...existing,
-        ...f,
-        addedAt: Math.min(existing.addedAt, f.addedAt),
-      });
-    } else {
-      byUrl.set(f.url, f);
-    }
-  }
-  return Array.from(byUrl.values()).sort((a, b) => a.addedAt - b.addedAt);
 }
 
 function MobileReader({

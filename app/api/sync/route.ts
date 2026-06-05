@@ -19,7 +19,7 @@ function sanitizeAI(input: unknown): unknown {
   if (!input || typeof input !== "object") return input;
   const src = input as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const k of ["endpoint", "model", "style"]) {
+  for (const k of ["endpoint", "model", "style", "summaryLanguage"]) {
     if (k in src) out[k] = src[k];
   }
   return out;
@@ -89,6 +89,9 @@ export async function PUT(request: Request) {
     ai: sanitizeAI((body as Record<string, unknown>).ai),
     updatedAt: Date.now(),
   };
+  const baseUpdatedAtRaw = (body as Record<string, unknown>).baseUpdatedAt;
+  const baseUpdatedAt =
+    typeof baseUpdatedAtRaw === "number" ? baseUpdatedAtRaw : null;
 
   const serialized = JSON.stringify(blob);
   if (serialized.length > MAX_BLOB_BYTES) {
@@ -100,7 +103,18 @@ export async function PUT(request: Request) {
 
   try {
     const redis = getRedis();
-    await redis.set(userKey(githubId), serialized);
+    const key = userKey(githubId);
+    const existingRaw = await redis.get(key);
+    if (baseUpdatedAt !== null && existingRaw != null) {
+      const existing = JSON.parse(existingRaw) as SyncBlob;
+      if ((existing.updatedAt ?? 0) > baseUpdatedAt) {
+        return NextResponse.json(
+          { error: "Sync conflict", blob: existing },
+          { status: 409 },
+        );
+      }
+    }
+    await redis.set(key, serialized);
     return NextResponse.json({ ok: true, updatedAt: blob.updatedAt });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sync write failed";
