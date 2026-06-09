@@ -1,14 +1,15 @@
 import crypto from "node:crypto";
-import { getRedis } from "./redis";
+import { getRssSupabase } from "./supabase";
+import { getOrCreateAppUserId } from "./userStore";
 
 const ALGO = "aes-256-gcm";
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const MAX_KEY_BYTES = 4096;
 
-export function aiKeyRedisKey(githubId: string): string {
-  return `prss:user:${githubId}:aiKey`;
-}
+type AIKeyRow = {
+  encrypted_api_key: string | null;
+};
 
 function loadSecret(): Buffer {
   const raw = process.env.AI_KEY_ENC_SECRET;
@@ -65,24 +66,52 @@ export async function setAIKey(githubId: string, apiKey: string): Promise<void> 
   if (Buffer.byteLength(apiKey, "utf8") > MAX_KEY_BYTES) {
     throw new Error("apiKey too large");
   }
-  const redis = getRedis();
-  await redis.set(aiKeyRedisKey(githubId), encrypt(apiKey));
+  const userId = await getOrCreateAppUserId("github", githubId);
+  const { error } = await getRssSupabase().from("user_ai_settings").upsert(
+    {
+      user_id: userId,
+      encrypted_api_key: encrypt(apiKey),
+      api_key_updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+  if (error) throw new Error(error.message);
 }
 
 export async function getAIKey(githubId: string): Promise<string | null> {
-  const redis = getRedis();
-  const stored = await redis.get(aiKeyRedisKey(githubId));
-  if (!stored) return null;
-  return decrypt(stored);
+  const userId = await getOrCreateAppUserId("github", githubId);
+  const { data, error } = await getRssSupabase()
+    .from("user_ai_settings")
+    .select("encrypted_api_key")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+
+  const row = data as AIKeyRow | null;
+  if (!row?.encrypted_api_key) return null;
+  return decrypt(row.encrypted_api_key);
 }
 
 export async function clearAIKey(githubId: string): Promise<void> {
-  const redis = getRedis();
-  await redis.del(aiKeyRedisKey(githubId));
+  const userId = await getOrCreateAppUserId("github", githubId);
+  const { error } = await getRssSupabase()
+    .from("user_ai_settings")
+    .update({
+      encrypted_api_key: null,
+      api_key_updated_at: null,
+    })
+    .eq("user_id", userId);
+  if (error) throw new Error(error.message);
 }
 
 export async function hasAIKey(githubId: string): Promise<boolean> {
-  const redis = getRedis();
-  const exists = await redis.exists(aiKeyRedisKey(githubId));
-  return exists === 1;
+  const userId = await getOrCreateAppUserId("github", githubId);
+  const { data, error } = await getRssSupabase()
+    .from("user_ai_settings")
+    .select("encrypted_api_key")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const row = data as AIKeyRow | null;
+  return Boolean(row?.encrypted_api_key);
 }

@@ -1,22 +1,20 @@
 import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
 import { getAIKey } from "@/app/lib/aiKeyStore";
+import { readAIConfig } from "@/app/lib/syncStore";
 import { auth } from "@/auth";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
-import type { AIStyle } from "@/app/lib/types";
+import type { SummaryLanguage } from "@/app/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type Body = {
-  endpoint?: string;
-  model?: string;
-  style?: AIStyle;
   title?: string;
   content?: string;
   url?: string;
-  language?: string;
+  locale?: string;
 };
 
 const MAX_CONTENT = 60_000;
@@ -42,20 +40,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const endpoint = body.endpoint?.trim();
-  const model = body.model?.trim();
-  const style: AIStyle = body.style === "anthropic" ? "anthropic" : "openai";
-  if (!endpoint || !model) {
-    return NextResponse.json(
-      { error: "endpoint and model are required" },
-      { status: 400 },
-    );
-  }
   let apiKey: string | null;
+  let aiConfig: Awaited<ReturnType<typeof readAIConfig>>;
   try {
-    apiKey = await getAIKey(githubId);
+    [apiKey, aiConfig] = await Promise.all([
+      getAIKey(githubId),
+      readAIConfig(githubId),
+    ]);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Key lookup failed";
+    const message = err instanceof Error ? err.message : "AI config lookup failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
   if (!apiKey) {
@@ -64,9 +57,15 @@ export async function POST(request: Request) {
       { status: 412 },
     );
   }
+  if (!aiConfig) {
+    return NextResponse.json(
+      { error: "AI settings not configured; open Settings to choose a model" },
+      { status: 412 },
+    );
+  }
 
   try {
-    await assertPublicHttpUrl(endpoint, { forceHttps: true });
+    await assertPublicHttpUrl(aiConfig.endpoint, { forceHttps: true });
   } catch (err) {
     if (err instanceof SSRFError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
@@ -78,7 +77,11 @@ export async function POST(request: Request) {
   if (!content) {
     return NextResponse.json({ error: "Empty content" }, { status: 400 });
   }
-  const targetLanguage = normalizeTargetLanguage(body.language);
+  const targetLanguage = targetLanguageFromSetting(
+    aiConfig.summaryLanguage,
+    body.locale,
+    request.headers.get("accept-language"),
+  );
   const languageInstruction = targetLanguage
     ? [
         `Reply only in ${targetLanguage}, regardless of the article's original language.`,
@@ -112,9 +115,21 @@ export async function POST(request: Request) {
 
   try {
     const { url, headers, payload, parseSummary } =
-      style === "anthropic"
-        ? anthropicRequest(endpoint, apiKey, model, systemPrompt, userPrompt)
-        : openaiRequest(endpoint, apiKey, model, systemPrompt, userPrompt);
+      aiConfig.style === "anthropic"
+        ? anthropicRequest(
+            aiConfig.endpoint,
+            apiKey,
+            aiConfig.model,
+            systemPrompt,
+            userPrompt,
+          )
+        : openaiRequest(
+            aiConfig.endpoint,
+            apiKey,
+            aiConfig.model,
+            systemPrompt,
+            userPrompt,
+          );
 
     const res = await safeFetch(url, {
       method: "POST",
@@ -146,6 +161,7 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     }
+
     return NextResponse.json({ summary });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Summarize failed";
@@ -205,17 +221,18 @@ function anthropicRequest(
   return { url, headers, payload, parseSummary: parseAnthropic };
 }
 
-function normalizeTargetLanguage(
-  language: string | undefined,
+function targetLanguageFromSetting(
+  mode: SummaryLanguage,
+  locale: string | undefined,
+  acceptLanguage: string | null,
 ): "Simplified Chinese" | "English" | null {
-  const value = language?.trim().toLowerCase();
-  if (!value || value === "source" || value === "original") return null;
-  if (value === "zh" || value === "zh-cn" || value === "chinese") {
-    return "Simplified Chinese";
-  }
-  if (value === "simplified chinese") return "Simplified Chinese";
-  if (value === "en" || value === "english") return "English";
-  return null;
+  if (mode === "source") return null;
+  if (mode === "zh") return "Simplified Chinese";
+  if (mode === "en") return "English";
+  const value = `${locale ?? ""},${acceptLanguage ?? ""}`.trim().toLowerCase();
+  return value.startsWith("zh") || value.includes(",zh")
+    ? "Simplified Chinese"
+    : "English";
 }
 
 function parseOpenAI(json: unknown): string | undefined {

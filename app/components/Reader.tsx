@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useLocale, useTranslations } from "next-intl";
 import type {
@@ -11,6 +11,7 @@ import type {
   SummaryLanguage,
 } from "@/app/lib/types";
 import { usePullGestures } from "@/app/lib/usePullToRefresh";
+import { normalizeHttpUrl, normalizeMaybeEncodedHttpUrl } from "@/app/lib/url";
 import {
   isInitialized,
   loadAIConfig,
@@ -47,9 +48,13 @@ type FeedState =
 
 type SyncBlob = {
   feeds?: Feed[];
-  read?: string[];
   ai?: AIConfig | null;
   updatedAt: number;
+};
+
+type SyncPatch = {
+  feeds?: Feed[];
+  ai?: AIConfig | null;
 };
 
 type SyncStatus =
@@ -140,7 +145,10 @@ export function Reader() {
     setHydrated(true);
   }, []);
 
-  async function refreshFeed(feed: Feed, options?: { silent?: boolean }) {
+  const refreshFeed = useCallback(async (
+    feed: Feed,
+    options?: { silent?: boolean },
+  ) => {
     const silent = options?.silent ?? false;
     setFeedStates((prev) => {
       const existing = prev[feed.id];
@@ -198,67 +206,15 @@ export function Reader() {
         };
       });
     }
-  }
+  }, []);
 
-  async function pushBlob(
-    nextFeeds: Feed[],
-    nextRead: Set<string>,
-    nextAI: AIConfig | null,
-  ) {
-    pushingRef.current = true;
-    setSyncStatus({ state: "syncing" });
-    try {
-      const res = await fetch("/api/sync", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          feeds: nextFeeds,
-          read: Array.from(nextRead),
-          ai: nextAI,
-          baseUpdatedAt: remoteUpdatedAtRef.current,
-        }),
-      });
-      const data = await readApiJson<{
-        updatedAt?: number;
-        blob?: SyncBlob | null;
-      }>(res);
-      if (res.status === 409 && data.blob) {
-        const remote = data.blob;
-        const remoteRead = new Set(remote.read ?? []);
-        const mergedRead = new Set<string>([...nextRead, ...remoteRead]);
-        const mergedAI = remote.ai ?? nextAI;
-        applyRemoteBlob(remote, mergedRead, mergedAI);
-        if (mergedRead.size > remoteRead.size) {
-          await pushBlob(remote.feeds ?? [], mergedRead, mergedAI);
-        }
-        return;
-      }
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      remoteUpdatedAtRef.current = data.updatedAt ?? Date.now();
-      setSyncStatus({
-        state: "idle",
-        updatedAt: remoteUpdatedAtRef.current,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Sync failed";
-      setSyncStatus({ state: "error", error: message });
-    } finally {
-      pushingRef.current = false;
-    }
-  }
-
-  function applyRemoteBlob(
-    remote: SyncBlob,
-    nextRead: Set<string>,
-    nextAI: AIConfig | null,
-  ) {
+  const applyRemoteSync = useCallback((remote: SyncBlob) => {
     const nextFeeds = remote.feeds ?? [];
     const feedIds = new Set(nextFeeds.map((f) => f.id));
     suppressNextPushRef.current = true;
     remoteUpdatedAtRef.current = remote.updatedAt ?? Date.now();
     setFeeds(nextFeeds);
-    setReadSet(nextRead);
-    setAIConfig(nextAI);
+    setAIConfig(remote.ai ?? null);
     setFeedStates((prev) => {
       const next: Record<string, FeedState> = {};
       for (const f of nextFeeds) {
@@ -276,10 +232,63 @@ export function Reader() {
       return feedIds.has(prev) ? prev : "all";
     });
     saveFeeds(nextFeeds);
-    saveRead(nextRead);
-    saveAIConfig(nextAI);
+    saveAIConfig(remote.ai ?? null);
     setSyncStatus({ state: "idle", updatedAt: remoteUpdatedAtRef.current });
-  }
+  }, []);
+
+  const pushSyncPatch = useCallback(async (
+    patch: SyncPatch,
+    options?: { retryAIAfterConflict?: boolean },
+  ) => {
+    pushingRef.current = true;
+    setSyncStatus({ state: "syncing" });
+    try {
+      let baseUpdatedAt = remoteUpdatedAtRef.current;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const res = await fetch("/api/sync", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...patch,
+            baseUpdatedAt,
+          }),
+        });
+        const data = await readApiJson<{
+          updatedAt?: number;
+          blob?: SyncBlob | null;
+        }>(res);
+        if (res.status === 409 && data.blob) {
+          applyRemoteSync(data.blob);
+          const canRetryAI =
+            options?.retryAIAfterConflict &&
+            Object.hasOwn(patch, "ai") &&
+            !Object.hasOwn(patch, "feeds");
+          if (canRetryAI && attempt === 0) {
+            baseUpdatedAt = data.blob.updatedAt ?? Date.now();
+            continue;
+          }
+          throw new Error("Sync conflict; remote changes were loaded.");
+        }
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        if (data.blob) {
+          applyRemoteSync(data.blob);
+        } else {
+          remoteUpdatedAtRef.current = data.updatedAt ?? Date.now();
+          setSyncStatus({
+            state: "idle",
+            updatedAt: remoteUpdatedAtRef.current,
+          });
+        }
+        return;
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Sync failed";
+      setSyncStatus({ state: "error", error: message });
+      throw err;
+    } finally {
+      pushingRef.current = false;
+    }
+  }, [applyRemoteSync]);
 
   // Pull from server on sign-in. Remote feeds are authoritative so deletions
   // from another device do not get reintroduced by stale local storage.
@@ -302,22 +311,15 @@ export function Reader() {
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
         if (cancelled) return;
         const remote = data.blob;
-        const localRead = loadRead();
         const localAI = loadAIConfig();
         syncReady.current = true;
         if (remote) {
-          const remoteRead = new Set(remote.read ?? []);
-          const mergedRead = new Set<string>([...localRead, ...remoteRead]);
-          const mergedAI = remote.ai ?? localAI;
-          applyRemoteBlob(remote, mergedRead, mergedAI);
-          if (mergedRead.size > remoteRead.size) {
-            void pushBlob(remote.feeds ?? [], mergedRead, mergedAI);
-          }
+          applyRemoteSync(remote);
         } else {
           const localFeeds = loadFeeds();
           remoteUpdatedAtRef.current = null;
           setSyncStatus({ state: "idle", updatedAt: null });
-          void pushBlob(localFeeds, localRead, localAI);
+          void pushSyncPatch({ feeds: localFeeds, ai: localAI }).catch(() => {});
         }
       } catch (err) {
         if (cancelled) return;
@@ -328,7 +330,7 @@ export function Reader() {
     return () => {
       cancelled = true;
     };
-  }, [authStatus, hydrated]);
+  }, [applyRemoteSync, authStatus, hydrated, pushSyncPatch]);
 
   // Debounced push on any change after initial sync
   useEffect(() => {
@@ -339,12 +341,12 @@ export function Reader() {
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      void pushBlob(feeds, readSet, aiConfig);
+      void pushSyncPatch({ feeds }).catch(() => {});
     }, 1500);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [feeds, readSet, aiConfig]);
+  }, [feeds, pushSyncPatch]);
 
   // Keep already-open tabs roughly in sync with changes pushed elsewhere.
   useEffect(() => {
@@ -364,14 +366,7 @@ export function Reader() {
         const lastRemoteUpdatedAt = remoteUpdatedAtRef.current ?? 0;
         if (remoteUpdatedAt <= lastRemoteUpdatedAt) return;
 
-        const localRead = loadRead();
-        const remoteRead = new Set(remote.read ?? []);
-        const mergedRead = new Set<string>([...localRead, ...remoteRead]);
-        const nextAI = remote.ai ?? loadAIConfig();
-        applyRemoteBlob(remote, mergedRead, nextAI);
-        if (mergedRead.size > remoteRead.size) {
-          void pushBlob(remote.feeds ?? [], mergedRead, nextAI);
-        }
+        applyRemoteSync(remote);
       } catch (err) {
         if (cancelled) return;
         const message = err instanceof Error ? err.message : "Sync failed";
@@ -388,10 +383,7 @@ export function Reader() {
       window.clearInterval(id);
       window.removeEventListener("focus", pullRemoteChanges);
     };
-    // applyRemoteBlob and pushBlob intentionally read current local storage/state
-    // on each tick; adding them here would reset the interval on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authStatus, hydrated]);
+  }, [applyRemoteSync, authStatus, hydrated]);
 
   // Track whether the server has a stored AI key for this user
   useEffect(() => {
@@ -454,7 +446,7 @@ export function Reader() {
       autoRefreshedRef.current.add(feed.id);
       void refreshFeed(feed, { silent: true });
     }
-  }, [feeds, hydrated]);
+  }, [feeds, hydrated, refreshFeed]);
 
   const allArticles = useMemo(() => {
     const list: Article[] = [];
@@ -651,6 +643,9 @@ export function Reader() {
     () => visibleArticles.find((a) => a.id === selectedArticleId) ?? null,
     [visibleArticles, selectedArticleId],
   );
+  const selectedArticleLink = selectedArticle
+    ? normalizeHttpUrl(selectedArticle.link)
+    : null;
   const selectedSummaryLanguage: SummaryLanguage =
     aiConfig?.summaryLanguage ?? "ui";
   const selectedSummaryKey = selectedArticle
@@ -711,15 +706,18 @@ export function Reader() {
   }, [allArticles, readSet, feeds]);
 
   async function handleAddFeed(url: string) {
-    const res = await fetch(`/api/feed?url=${encodeURIComponent(url)}`);
+    const feedUrl = normalizeMaybeEncodedHttpUrl(url);
+    if (!feedUrl) throw new Error("Invalid url");
+
+    const res = await fetch(`/api/feed?url=${encodeURIComponent(feedUrl)}`);
     const data = await readApiJson<{ feed?: ParsedFeed }>(res);
     if (!res.ok || !data.feed) {
       throw new Error(data.error ?? `HTTP ${res.status}`);
     }
     const feed: Feed = {
       id: randomId(),
-      url,
-      title: data.feed.title || url,
+      url: feedUrl,
+      title: data.feed.title || feedUrl,
       addedAt: Date.now(),
     };
     const next = [...feeds, feed];
@@ -780,7 +778,11 @@ export function Reader() {
     saveFeeds(next);
   }
 
-  function handleSaveAI(cfg: AIConfig | null) {
+  async function handleSaveAI(cfg: AIConfig | null) {
+    if (authStatus === "authenticated" && syncReady.current) {
+      await pushSyncPatch({ ai: cfg }, { retryAIAfterConflict: true });
+      return;
+    }
     setAIConfig(cfg);
     saveAIConfig(cfg);
   }
@@ -870,18 +872,15 @@ export function Reader() {
         body = body.slice(0, MAX_SUMMARY_INPUT);
       }
       const languageMode = aiConfig.summaryLanguage ?? "ui";
-      const requestLanguage = summaryRequestLanguage(languageMode, locale);
+      const key = summaryStorageKey(article.id, languageMode, locale);
       const res = await fetch("/api/summarize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          endpoint: aiConfig.endpoint,
-          model: aiConfig.model,
-          style: aiConfig.style,
           title: article.title,
           url: article.link,
           content: body,
-          language: requestLanguage ?? "source",
+          locale,
         }),
       });
       const data = await readApiJson<{ summary?: string }>(res);
@@ -889,7 +888,6 @@ export function Reader() {
         throw new Error(data.error ?? `HTTP ${res.status}`);
       }
       setSummaries((prev) => {
-        const key = summaryStorageKey(article.id, languageMode, locale);
         const next = { ...prev, [key]: data.summary! };
         saveSummaries(next);
         return next;
@@ -904,22 +902,6 @@ export function Reader() {
   const refreshingAll = Object.values(feedStates).some(
     (s) => s.status === "loading",
   );
-
-  async function readApiJson<T>(res: Response): Promise<T & { error?: string }> {
-    const text = await res.text();
-    try {
-      return JSON.parse(text) as T & { error?: string };
-    } catch {
-      const isHtml = /<\s*(!doctype\s+html|html)\b/i.test(text);
-      if (isHtml) {
-        throw new Error("Server returned an HTML error page instead of JSON.");
-      }
-      const preview = text.slice(0, 120).replace(/\s+/g, " ").trim();
-      throw new Error(
-        preview ? `Invalid server response: ${preview}` : "Invalid server response",
-      );
-    }
-  }
 
   return (
     <div className="flex h-[100dvh] w-full">
@@ -1284,14 +1266,16 @@ export function Reader() {
                   {selectedArticle.title}
                 </h1>
                 <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <a
-                    href={selectedArticle.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm rounded border border-border px-3 py-1 hover:bg-muted"
-                  >
-                    {t("openOriginal")} ↗
-                  </a>
+                  {selectedArticleLink && (
+                    <a
+                      href={selectedArticleLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm rounded border border-border px-3 py-1 hover:bg-muted"
+                    >
+                      {t("openOriginal")} ↗
+                    </a>
+                  )}
                   <button
                     onClick={() => handleSummarize(selectedArticle)}
                     disabled={summarizing === selectedArticle.id}
@@ -1306,7 +1290,7 @@ export function Reader() {
                   <button
                     onClick={() => handleExtractFull(selectedArticle)}
                     disabled={
-                      extracting === selectedArticle.id || !selectedArticle.link
+                      extracting === selectedArticle.id || !selectedArticleLink
                     }
                     className="ml-auto text-xs rounded px-2 py-1 opacity-40 hover:opacity-100 hover:bg-muted disabled:opacity-20"
                     title={
@@ -1423,6 +1407,22 @@ export function Reader() {
   );
 }
 
+async function readApiJson<T>(res: Response): Promise<T & { error?: string }> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T & { error?: string };
+  } catch {
+    const isHtml = /<\s*(!doctype\s+html|html)\b/i.test(text);
+    if (isHtml) {
+      throw new Error("Server returned an HTML error page instead of JSON.");
+    }
+    const preview = text.slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      preview ? `Invalid server response: ${preview}` : "Invalid server response",
+    );
+  }
+}
+
 function ArticleBody({
   article,
   html,
@@ -1431,6 +1431,11 @@ function ArticleBody({
   html?: string;
 }) {
   const t = useTranslations("Reader");
+  const sourceUrl = normalizeHttpUrl(article.link);
+  const safeHtml = useMemo(
+    () => (html ? normalizeRenderedHtmlLinks(html, sourceUrl ?? undefined) : html),
+    [html, sourceUrl],
+  );
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [toc, setToc] = useState<{ id: string; text: string; level: number }[]>(
     [],
@@ -1440,7 +1445,7 @@ function ArticleBody({
 
   useEffect(() => {
     const root = containerRef.current;
-    if (!root || !html) {
+    if (!root || !safeHtml) {
       setToc([]);
       setActiveId(null);
       return;
@@ -1504,7 +1509,7 @@ function ArticleBody({
       scroller.removeEventListener("scroll", schedule);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [html, article.id]);
+  }, [safeHtml, article.id]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -1546,14 +1551,19 @@ function ArticleBody({
           className="prose-content w-full min-w-0 py-8"
           ref={containerRef}
         >
-        {html ? (
-          <div dangerouslySetInnerHTML={{ __html: html }} />
+        {safeHtml ? (
+          <div dangerouslySetInnerHTML={{ __html: safeHtml }} />
         ) : (
           <p className="opacity-60 text-sm">
-            {t("noContent")}{" "}
-            <a href={article.link} target="_blank" rel="noopener noreferrer">
-              {t("readOnSource")}
-            </a>
+            {t("noContent")}
+            {sourceUrl && (
+              <>
+                {" "}
+                <a href={sourceUrl} target="_blank" rel="noopener noreferrer">
+                  {t("readOnSource")}
+                </a>
+              </>
+            )}
           </p>
         )}
         </div>
@@ -1593,6 +1603,30 @@ function ArticleBody({
       </div>
     </div>
   );
+}
+
+function normalizeRenderedHtmlLinks(
+  html: string,
+  baseUrl: string | undefined,
+): string {
+  if (typeof document === "undefined") return html;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  template.content.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+    const href = a.getAttribute("href");
+    if (!href) return;
+    const normalized = normalizeHttpUrl(href, baseUrl);
+    if (!normalized) {
+      a.removeAttribute("href");
+      a.removeAttribute("target");
+      a.removeAttribute("rel");
+      return;
+    }
+    a.href = normalized;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+  });
+  return template.innerHTML;
 }
 
 function MobileFeedPicker({
@@ -1797,16 +1831,6 @@ function summaryLanguageCachePart(
   if (mode === "source") return "source";
   if (mode === "zh" || mode === "en") return mode;
   return locale === "zh" ? "zh" : "en";
-}
-
-function summaryRequestLanguage(
-  mode: SummaryLanguage,
-  locale: string,
-): "Simplified Chinese" | "English" | null {
-  const key = summaryLanguageCachePart(mode, locale);
-  if (key === "zh") return "Simplified Chinese";
-  if (key === "en") return "English";
-  return null;
 }
 
 function summaryLanguageDisplayName(
@@ -2390,6 +2414,7 @@ function MobileReader({
   onExtract: () => void;
 }) {
   const t = useTranslations("Reader");
+  const sourceUrl = normalizeHttpUrl(article.link);
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
@@ -2400,17 +2425,19 @@ function MobileReader({
         >
           ← {t("back")}
         </button>
-        <a
-          href={article.link}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ml-auto text-xs rounded border border-border px-2 py-1"
-        >
-          {t("open")} ↗
-        </a>
+        {sourceUrl && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto text-xs rounded border border-border px-2 py-1"
+          >
+            {t("open")} ↗
+          </a>
+        )}
         <button
           onClick={onExtract}
-          disabled={extracting || !article.link}
+          disabled={extracting || !sourceUrl}
           className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 disabled:opacity-30"
           title={fullHtml ? t("reloadFullArticle") : t("loadFullArticle")}
         >

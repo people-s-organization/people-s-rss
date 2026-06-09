@@ -3,6 +3,7 @@ import { parseFeedXml } from "@/app/lib/rss";
 import { normalizeArticleHtml } from "@/app/lib/articleHtml";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
+import { normalizeHttpUrl, normalizeMaybeEncodedHttpUrl } from "@/app/lib/url";
 import { auth } from "@/auth";
 
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
   const rl = await rateLimit("feed", identity, 60, 60);
   if (!rl.ok) return rateLimitedResponse(rl);
 
-  const normalizedUrl = normalizeTargetUrl(url);
+  const normalizedUrl = normalizeMaybeEncodedHttpUrl(url);
   if (!normalizedUrl) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
@@ -71,9 +72,13 @@ export async function GET(request: Request) {
     const xml = new TextDecoder("utf-8").decode(buf);
     const feed = parseFeedXml(xml);
     for (const item of feed.items) {
+      item.link = normalizeHttpUrl(item.link, target.toString()) ?? "";
       if (item.contentHtml) {
         try {
-          item.contentHtml = normalizeArticleHtml(item.contentHtml, item.link);
+          item.contentHtml = normalizeArticleHtml(
+            item.contentHtml,
+            item.link || target.toString(),
+          );
         } catch {}
       }
     }
@@ -93,30 +98,4 @@ export async function GET(request: Request) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-
-function normalizeTargetUrl(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-
-  const candidates = [value];
-  try {
-    const decoded = decodeURIComponent(value);
-    if (decoded !== value) candidates.push(decoded);
-  } catch {}
-  try {
-    const decodedTwice = decodeURIComponent(candidates[candidates.length - 1]);
-    if (decodedTwice !== candidates[candidates.length - 1]) candidates.push(decodedTwice);
-  } catch {}
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = new URL(candidate);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        return parsed.toString();
-      }
-    } catch {}
-  }
-  return null;
 }

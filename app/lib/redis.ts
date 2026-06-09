@@ -1,29 +1,23 @@
-import Redis from "ioredis";
+import { Redis } from "@upstash/redis";
 
 let client: Redis | null = null;
 
-function resolveUrl(): string {
-  const direct = process.env.REDIS_URL;
-  if (direct) return direct;
-  for (const key of Object.keys(process.env)) {
-    if (key.endsWith("_REDIS_URL")) {
-      const v = process.env[key];
-      if (v) return v;
-    }
+function assertUpstashEnv() {
+  const hasUpstash =
+    process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!hasUpstash) {
+    throw new Error(
+      "Upstash Redis is not configured (set UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN)",
+    );
   }
-  throw new Error("Redis URL not configured (set REDIS_URL or *_REDIS_URL)");
 }
 
 export function getRedis(): Redis {
   if (client) return client;
-  client = new Redis(resolveUrl(), {
-    lazyConnect: false,
-    maxRetriesPerRequest: 2,
-    enableAutoPipelining: true,
+  assertUpstashEnv();
+  client = Redis.fromEnv({
+    automaticDeserialization: false,
   });
   return client;
-}
-
-export function userKey(githubId: string): string {
-  return `prss:user:${githubId}`;
 }

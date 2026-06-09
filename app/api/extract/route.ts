@@ -9,6 +9,7 @@ import {
 import { parseDocument } from "@/app/lib/dom";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
+import { normalizeHttpUrl, normalizeMaybeEncodedHttpUrl } from "@/app/lib/url";
 import { auth } from "@/auth";
 
 export const runtime = "nodejs";
@@ -59,7 +60,7 @@ export async function GET(request: Request) {
   const rl = await rateLimit("extract", identity, 30, 60);
   if (!rl.ok) return rateLimitedResponse(rl);
 
-  const normalizedUrl = normalizeTargetUrl(url);
+  const normalizedUrl = normalizeMaybeEncodedHttpUrl(url);
   if (!normalizedUrl) {
     return NextResponse.json({ error: "Invalid url" }, { status: 400 });
   }
@@ -267,35 +268,9 @@ function resolveUrls(html: string, baseUrl: string): string {
   doc.querySelectorAll("a[href]").forEach((el) => {
     const v = el.getAttribute("href");
     if (!v) return;
-    try {
-      el.setAttribute("href", new URL(v, baseUrl).href);
-    } catch {}
+    const normalized = normalizeHttpUrl(v, baseUrl);
+    if (normalized) el.setAttribute("href", normalized);
+    else el.removeAttribute("href");
   });
   return doc.body.innerHTML;
-}
-
-
-function normalizeTargetUrl(raw: string): string | null {
-  const value = raw.trim();
-  if (!value) return null;
-
-  const candidates = [value];
-  try {
-    const decoded = decodeURIComponent(value);
-    if (decoded !== value) candidates.push(decoded);
-  } catch {}
-  try {
-    const decodedTwice = decodeURIComponent(candidates[candidates.length - 1]);
-    if (decodedTwice !== candidates[candidates.length - 1]) candidates.push(decodedTwice);
-  } catch {}
-
-  for (const candidate of candidates) {
-    try {
-      const parsed = new URL(candidate);
-      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
-        return parsed.toString();
-      }
-    } catch {}
-  }
-  return null;
 }

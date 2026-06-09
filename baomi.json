@@ -15,14 +15,14 @@
     "zh": "运行在 Vercel 上的极简 RSS / Atom 阅读器，用你自己的 Key 生成 AI 摘要。"
   },
   "description": {
-    "en": "A self-hosted, privacy-first feed reader. Add any RSS or Atom URL, summarize any article in one click with your own AI key, and sync everything across devices with GitHub sign-in.",
+    "en": "A self-hosted, privacy-first feed reader. Add any RSS or Atom URL, summarize any article in one click with your own AI key, and sync feeds and AI settings across devices with GitHub sign-in.",
     "zh": "自托管、隐私优先的阅读器。添加任意 RSS 或 Atom 源，用你自己的 AI Key 一键总结文章，并通过 GitHub 登录在多设备间同步。"
   },
   "features": {
     "en": [
       "Add any RSS / Atom feed — Chinese & English UI",
       "One-click AI summaries (OpenAI / Anthropic, your key)",
-      "Cross-device sync of feeds & read state via GitHub",
+      "Cross-device sync of feeds & AI settings via GitHub",
       "Full-text extraction with Readability & Jina fallback",
       "Built-in image proxy, SSRF protection & rate limiting"
     ],
@@ -38,7 +38,8 @@
     "Next.js 16",
     "TypeScript",
     "Tailwind CSS",
-    "Upstash Redis"
+    "Upstash Redis",
+    "Supabase"
   ],
   "links": [
     {

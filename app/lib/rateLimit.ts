@@ -20,15 +20,12 @@ export async function rateLimit(
 
   const multi = redis.multi();
   multi.zremrangebyscore(key, 0, windowStart);
-  multi.zadd(key, now, member);
+  multi.zadd(key, { score: now, member });
   multi.zcard(key);
   multi.pexpire(key, windowSec * 1000 + 1000);
   const replies = (await multi.exec()) ?? [];
   const cardReply = replies[2];
-  const count =
-    Array.isArray(cardReply) && typeof cardReply[1] === "number"
-      ? (cardReply[1] as number)
-      : 0;
+  const count = typeof cardReply === "number" ? cardReply : 0;
 
   if (count > max) {
     // Immediately remove the member to prevent the sorted set from inflating under spam

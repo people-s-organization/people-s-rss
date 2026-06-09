@@ -6,6 +6,7 @@ import { useTranslations, useLocale } from "next-intl";
 import { useRouter, usePathname } from "next/navigation";
 import type { AIConfig, AIStyle, Feed, SummaryLanguage } from "@/app/lib/types";
 import { defaultEndpoint, detectStyle } from "@/app/lib/aiProviders";
+import { normalizeHttpUrl } from "@/app/lib/url";
 
 type Props = {
   open: boolean;
@@ -19,7 +20,7 @@ type Props = {
   aiConfig: AIConfig | null;
   hasAIKey: boolean;
   isSignedIn: boolean;
-  onSaveAI: (cfg: AIConfig | null) => void;
+  onSaveAI: (cfg: AIConfig | null) => Promise<void>;
   onSetAIKey: (apiKey: string) => Promise<void>;
   onClearAIKey: () => Promise<void>;
 };
@@ -163,7 +164,7 @@ function SettingsDialogBody({
       if (draft) {
         await onSetAIKey(draft);
       }
-      onSaveAI({
+      await onSaveAI({
         endpoint: endpoint.trim(),
         model: model.trim(),
         style,
@@ -183,7 +184,7 @@ function SettingsDialogBody({
     setSaveError(null);
     try {
       await onClearAIKey();
-      onSaveAI(null);
+      await onSaveAI(null);
       setStyle("openai");
       setEndpoint(defaultEndpoint("openai"));
       setApiKeyDraft("");
@@ -593,61 +594,67 @@ function FeedListByCategory({
                   {cat || t("uncategorized")}
                 </div>
                 <ul className="space-y-1.5">
-                  {groupFeeds.map((f) => (
-                    <li
-                      key={f.id}
-                      className="rounded border border-border p-2"
-                    >
-                      <div className="flex items-center gap-2">
-                        <input
-                          defaultValue={f.title}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            if (v && v !== f.title) onRenameFeed(f.id, v);
-                          }}
-                          className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
-                        />
-                        <select
-                          value={f.category ?? ""}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "__new__") {
-                              const next = window.prompt(t("newCategoryInline"));
-                              if (next && next.trim())
-                                onSetCategory(f.id, next.trim());
-                              return;
-                            }
-                            onSetCategory(f.id, v);
-                          }}
-                          className="text-xs rounded border border-border bg-background px-2 py-1 max-w-[10rem]"
-                          title={t("categoryDropdownTitle")}
-                        >
-                          <option value="">{t("uncategorized")}</option>
-                          {allCategories.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                          <option value="__new__">{t("newCategoryOption")}</option>
-                        </select>
-                        <button
-                          onClick={() => onRemoveFeed(f.id)}
-                          className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
-                          title={t("removeFeedTitle")}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      <a
-                        href={f.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs opacity-60 hover:opacity-100 truncate block mt-1 px-1"
-                      >
-                        {f.url}
-                      </a>
-                    </li>
-                  ))}
+                  {groupFeeds.map((f) => {
+                    const feedUrl = normalizeHttpUrl(f.url);
+                    return (
+                      <li key={f.id} className="rounded border border-border p-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            defaultValue={f.title}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (v && v !== f.title) onRenameFeed(f.id, v);
+                            }}
+                            className="flex-1 bg-transparent text-sm font-medium focus:outline-none focus:ring-1 focus:ring-accent/60 rounded px-1"
+                          />
+                          <select
+                            value={f.category ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "__new__") {
+                                const next = window.prompt(t("newCategoryInline"));
+                                if (next && next.trim())
+                                  onSetCategory(f.id, next.trim());
+                                return;
+                              }
+                              onSetCategory(f.id, v);
+                            }}
+                            className="text-xs rounded border border-border bg-background px-2 py-1 max-w-[10rem]"
+                            title={t("categoryDropdownTitle")}
+                          >
+                            <option value="">{t("uncategorized")}</option>
+                            {allCategories.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                            <option value="__new__">{t("newCategoryOption")}</option>
+                          </select>
+                          <button
+                            onClick={() => onRemoveFeed(f.id)}
+                            className="text-xs rounded px-2 py-1 hover:bg-red-500/10 text-red-500 shrink-0"
+                            title={t("removeFeedTitle")}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {feedUrl ? (
+                          <a
+                            href={feedUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs opacity-60 hover:opacity-100 truncate block mt-1 px-1"
+                          >
+                            {f.url}
+                          </a>
+                        ) : (
+                          <div className="text-xs opacity-60 truncate mt-1 px-1">
+                            {f.url}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             );

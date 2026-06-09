@@ -1,4 +1,5 @@
 import { parseDocument } from "./dom";
+import { normalizeHttpUrl } from "./url";
 
 const EMOJI_ONLY = /^[\s‍️\p{Extended_Pictographic}]+$/u;
 const MERGE_TARGET_TAGS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6"]);
@@ -220,10 +221,28 @@ export function proxyImagesInDoc(
   });
 }
 
+function normalizeLinksInDoc(doc: Document, baseUrl: string | undefined): void {
+  doc.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.getAttribute("href");
+    if (!href) return;
+    const normalized = normalizeHttpUrl(href, baseUrl);
+    if (!normalized) {
+      a.removeAttribute("href");
+      a.removeAttribute("target");
+      a.removeAttribute("rel");
+      return;
+    }
+    a.setAttribute("href", normalized);
+    a.setAttribute("target", "_blank");
+    a.setAttribute("rel", "noopener noreferrer");
+  });
+}
+
 export function normalizeArticleHtml(html: string, baseUrl?: string): string {
   const doc = parseDocument(html, baseUrl);
   mergeIcons(doc as unknown as Document);
   assignHeadingIds(doc as unknown as Document);
   proxyImagesInDoc(doc as unknown as Document, baseUrl);
+  normalizeLinksInDoc(doc as unknown as Document, baseUrl);
   return doc.body?.innerHTML ?? "";
 }
