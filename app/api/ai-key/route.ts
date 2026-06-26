@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireGithubId } from "@/app/lib/apiAuth";
 import { clearAIKey, hasAIKey, setAIKey } from "@/app/lib/aiKeyStore";
 
 export const runtime = "nodejs";
@@ -8,11 +8,10 @@ export const dynamic = "force-dynamic";
 const MAX_KEY_LEN = 4096;
 
 export async function GET() {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
+
   try {
     const present = await hasAIKey(githubId);
     return NextResponse.json({ hasKey: present });
@@ -23,11 +22,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
+
   let body: unknown;
   try {
     body = await request.json();
@@ -54,11 +52,10 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
+
   try {
     await clearAIKey(githubId);
     return NextResponse.json({ ok: true });

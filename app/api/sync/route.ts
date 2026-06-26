@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { requireGithubId } from "@/app/lib/apiAuth";
 import {
   readSyncBlob,
   SyncConflictError,
@@ -11,11 +11,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
+
   try {
     const blob = await readSyncBlob(githubId);
     return NextResponse.json({ blob });
@@ -26,11 +25,9 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
 
   let body: unknown;
   try {

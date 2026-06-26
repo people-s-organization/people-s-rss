@@ -7,6 +7,9 @@
   "keep_vars": true,
   "workers_dev": true,
   "preview_urls": false,
+  "vars": {
+    "PEOPLES_RSS_RUNTIME": "cloudflare"
+  },
   "observability": {
     "enabled": true
   },

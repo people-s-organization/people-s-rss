@@ -93,6 +93,13 @@ export async function assertPublicHttpUrl(
     return url;
   }
 
+  // In Cloudflare Workers, node:dns can surface platform/proxy sentinel
+  // addresses for otherwise public hostnames. Treat hostnames as safe after
+  // URL/protocol validation there and let Workers fetch enforce egress policy.
+  if (isWorkersRuntime()) {
+    return url;
+  }
+
   let resolved: { address: string; family: number }[];
   try {
     resolved = await dns.lookup(hostname, { all: true });
@@ -118,6 +125,7 @@ type SecureFetch = (url: string, init?: SafeFetchInit) => Promise<Response>;
 let nodeSecureFetch: Promise<SecureFetch> | null = null;
 
 function isWorkersRuntime(): boolean {
+  if (process.env.PEOPLES_RSS_RUNTIME === "cloudflare") return true;
   return Boolean(
     typeof process !== "undefined" &&
       (process.versions as { workerd?: string }).workerd,

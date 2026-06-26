@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { joinPath } from "@/app/lib/aiProviders";
+import { requireGithubId } from "@/app/lib/apiAuth";
 import { getAIKey } from "@/app/lib/aiKeyStore";
 import { readAIConfig } from "@/app/lib/syncStore";
-import { auth } from "@/auth";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import type { SummaryLanguage } from "@/app/lib/types";
@@ -21,14 +21,9 @@ const MAX_CONTENT = 60_000;
 const FETCH_TIMEOUT_MS = 60_000;
 
 export async function POST(request: Request) {
-  const session = await auth();
-  const githubId = session?.user?.githubId;
-  if (!githubId) {
-    return NextResponse.json(
-      { error: "Sign in to use AI summary" },
-      { status: 401 },
-    );
-  }
+  const authResult = await requireGithubId();
+  if ("response" in authResult) return authResult.response;
+  const { githubId } = authResult;
 
   const rl = await rateLimit("summarize", githubId, 20, 60);
   if (!rl.ok) return rateLimitedResponse(rl);
