@@ -11,8 +11,8 @@
     "zh": "网页"
   },
   "tagline": {
-    "en": "A minimal RSS / Atom reader on Vercel, with bring-your-own-key AI summaries.",
-    "zh": "运行在 Vercel 上的极简 RSS / Atom 阅读器，用你自己的 Key 生成 AI 摘要。"
+    "en": "A minimal RSS / Atom reader on Cloudflare, with bring-your-own-key AI summaries.",
+    "zh": "运行在 Cloudflare 上的极简 RSS / Atom 阅读器，用你自己的 Key 生成 AI 摘要。"
   },
   "description": {
     "en": "A self-hosted, privacy-first feed reader. Add any RSS or Atom URL, summarize any article in one click with your own AI key, and sync feeds and AI settings across devices with GitHub sign-in.",

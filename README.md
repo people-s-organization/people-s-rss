@@ -1,6 +1,6 @@
 # People's RSS
 
-A minimal RSS / Atom reader that runs on Vercel. Bring your own AI key to
+A minimal RSS / Atom reader that runs on Cloudflare Workers. Bring your own AI key to
 summarize any article in one click; sign in with GitHub to sync feeds and
 public AI settings across devices.
 
@@ -13,7 +13,8 @@ public AI settings across devices.
   browser. Anonymous mode works too, with everything kept in `localStorage`.
 - **Full-text fallback** — if a feed only ships a summary, the reader
   extracts the full article via Readability + a Jina fallback.
-- **Built on Next.js 16 + Tailwind 4**, deploys to Vercel.
+- **Built on Next.js 16 + Tailwind 4**, deploys to Cloudflare Workers via
+  OpenNext.
 
 ## Local development
 
@@ -33,26 +34,31 @@ your `Accept-Language` header.
 | `AUTH_SECRET`            | NextAuth JWT signing               | `openssl rand -base64 32`                               |
 | `AUTH_GITHUB_ID`         | GitHub OAuth (sign-in + sync)      | <https://github.com/settings/developers> → New OAuth App|
 | `AUTH_GITHUB_SECRET`     | GitHub OAuth                       | Same OAuth app                                          |
+| `CANONICAL_HOST`         | Redirecting platform preview hosts | `rss.baomi.app` or your own host                        |
 | `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN` | Rate limit counters | Provider-direct Upstash Redis |
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` + `SUPABASE_DATABASE_URL` | Signed-in users, feeds, categories, public AI settings, encrypted AI API keys | Provider-direct Supabase project |
 | `AI_KEY_ENC_SECRET`      | Encrypting stored AI API keys      | `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
 
 Set auth/encryption/storage variables for both Production and Preview. External
-storage should be provisioned directly with the provider, not through Vercel
-storage integrations. **Don't lose
+storage should be provisioned directly with the provider, not through platform
+marketplace storage integrations. **Don't lose
 `AI_KEY_ENC_SECRET`** — if it changes, every user has to re-enter their
 AI key in Settings.
 
 The GitHub OAuth callback URL must be `https://<your-domain>/api/auth/callback/github`.
 
-## Deploy to Vercel
+## Deploy to Cloudflare
 
 ```bash
-npm i -g vercel && vercel login
-vercel link
-vercel env pull .env.local   # after configuring env vars in the dashboard
-vercel deploy --prod
+npm install
+npx wrangler login
+npx wrangler secret bulk .env.local
+npm run deploy
 ```
+
+`wrangler.jsonc` uses `keep_vars: true`, so deploys will not delete variables
+configured in the Cloudflare dashboard. Secrets are still managed by Wrangler or
+the dashboard and should never be committed.
 
 ## How it works
 
@@ -60,7 +66,7 @@ vercel deploy --prod
 | ---------------------------- | ------------------------------------------------------------------ |
 | UI                           | `app/[locale]/`, `app/components/Reader.tsx`, `SettingsDialog.tsx` |
 | i18n                         | `i18n/routing.ts`, `messages/{zh,en}.json` (next-intl)             |
-| Locale routing               | `proxy.ts` (Next 16 proxy / middleware)                            |
+| Locale routing               | `middleware.ts` (Edge middleware for Cloudflare compatibility)      |
 | Feed list, categories, AI config (public) | `localStorage` (prefix `prss:`) ↔ Supabase tables via `GET/PUT /api/sync` |
 | Read state                     | Browser `localStorage` only, prefix `prss:read`                         |
 | AI key (private)             | Server-only, AES-256-GCM in Supabase table `rss.user_ai_settings`  |
@@ -68,7 +74,7 @@ vercel deploy --prod
 | RSS fetch + parse            | `GET /api/feed?url=…` — sanitized + base-URL rewritten             |
 | Article extraction           | `GET /api/extract?url=…` — Readability via linkedom + Jina fallback|
 | AI summarization             | `POST /api/summarize` — reads stored AI settings/key, calls upstream |
-| Image proxy                  | `GET /api/image?url=…` — re-encodes via sharp                      |
+| Image proxy                  | `GET /api/image?url=…` — Cloudflare image transform when available, otherwise streams the image |
 
 The AI key is paste-once: you enter it in Settings, the server encrypts it
 with `AI_KEY_ENC_SECRET`, stores the ciphertext keyed by your GitHub id, and
@@ -111,5 +117,5 @@ and rejected if it points at a private / loopback / link-local / CGNAT / multica
   feed 60/min, extract 30/min, image 120/min, models 10/min, summarize 20/min.
 - Feed HTML is sanitized with a strict tag/attribute allowlist (no scripts,
   iframes, event handlers, or `javascript:`/`data:` URLs except inline images).
-- Response sizes and timeouts are capped on every fetch path (feed 5 MB / 15 s,
-  extract 8 MB / 20 s, image 25 MB / 20 s, summarize content 60 KB / 60 s).
+- Response sizes and timeouts are capped on heavy fetch paths (feed 5 MB / 15 s,
+  extract 8 MB / 20 s, image proxy 20 s, summarize content 60 KB / 60 s).

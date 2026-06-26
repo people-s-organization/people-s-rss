@@ -52,7 +52,7 @@ export async function GET(request: Request) {
   try {
     const res = await safeFetch(target.toString(), {
       headers: {
-        "User-Agent": "PeoplesRSS/1.0 (+https://vercel.com)",
+        "User-Agent": "PeoplesRSS/1.0 (+https://rss.baomi.app)",
         Accept:
           "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5",
       },

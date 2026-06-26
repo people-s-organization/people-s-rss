@@ -1,19 +1,32 @@
 import { NextResponse } from "next/server";
-import sharp from "sharp";
-import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
+import {
+  assertPublicHttpUrl,
+  safeFetch,
+  type SafeFetchInit,
+  SSRFError,
+} from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import { auth } from "@/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 25 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_WIDTH = 1600;
 const ABS_MAX_WIDTH = 2400;
 
 const ALLOWED_TYPES = /^image\//;
-const PASS_THROUGH_TYPES = /^image\/(svg\+xml|gif|x-icon|vnd\.microsoft\.icon)/;
+
+type CloudflareImageInit = SafeFetchInit & {
+  cf?: {
+    image?: {
+      fit?: "scale-down";
+      format?: "avif" | "webp";
+      quality?: number;
+      width?: number;
+    };
+  };
+};
 
 function callerIdentity(request: Request, githubId?: string): string {
   if (githubId) return `u:${githubId}`;
@@ -54,7 +67,7 @@ export async function GET(request: Request) {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const res = await safeFetch(target.toString(), {
+    const fetchInit: CloudflareImageInit = {
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
@@ -63,7 +76,18 @@ export async function GET(request: Request) {
       },
       signal: controller.signal,
       redirect: "follow",
-    });
+      cf: {
+        image: {
+          fit: "scale-down",
+          format: request.headers.get("accept")?.includes("image/avif")
+            ? "avif"
+            : "webp",
+          quality: 82,
+          width: targetWidth,
+        },
+      },
+    };
+    const res = await safeFetch(target.toString(), fetchInit);
     if (!res.ok) {
       return new NextResponse(`Upstream ${res.status}`, { status: 502 });
     }
@@ -71,25 +95,7 @@ export async function GET(request: Request) {
     if (!ALLOWED_TYPES.test(type)) {
       return new NextResponse(`Unsupported type ${type}`, { status: 415 });
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_BYTES) {
-      return new NextResponse("Too large", { status: 413 });
-    }
-
-    if (PASS_THROUGH_TYPES.test(type)) {
-      return raw200(buf, type);
-    }
-
-    try {
-      const out = await sharp(buf, { failOn: "none" })
-        .rotate()
-        .resize({ width: targetWidth, withoutEnlargement: true })
-        .webp({ quality: 82, effort: 4 })
-        .toBuffer();
-      return raw200(out, "image/webp");
-    } catch {
-      return raw200(buf, type);
-    }
+    return raw200(res.body, type);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Image proxy failed";
     return new NextResponse(message, { status: 500 });
@@ -98,12 +104,11 @@ export async function GET(request: Request) {
   }
 }
 
-function raw200(body: Buffer, type: string): NextResponse {
-  return new NextResponse(new Uint8Array(body), {
+function raw200(body: BodyInit | null, type: string): NextResponse {
+  return new NextResponse(body, {
     status: 200,
     headers: {
       "Content-Type": type,
-      "Content-Length": String(body.byteLength),
       "Cache-Control": "public, max-age=86400, s-maxage=604800, immutable",
       "X-Content-Type-Options": "nosniff",
     },

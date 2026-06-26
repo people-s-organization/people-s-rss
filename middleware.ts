@@ -3,15 +3,20 @@ import { NextResponse, type NextRequest } from "next/server";
 import { routing } from "./i18n/routing";
 
 const handle = createMiddleware(routing);
-
 const CANONICAL_HOST = "rss.baomi.app";
 
-export function proxy(request: NextRequest) {
-  // Send the production *.vercel.app system domain to the canonical domain.
-  // Preview deployments (VERCEL_ENV !== "production") keep their own URLs so
-  // branch previews stay reachable.
+function shouldRedirectToCanonical(host: string): boolean {
+  if (!host || host === CANONICAL_HOST) return false;
+  return (
+    host.endsWith(".workers.dev") ||
+    host.endsWith(".pages.dev") ||
+    host.endsWith(".vercel.app")
+  );
+}
+
+export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
-  if (process.env.VERCEL_ENV === "production" && host.endsWith(".vercel.app")) {
+  if (shouldRedirectToCanonical(host)) {
     const url = request.nextUrl.clone();
     url.protocol = "https:";
     url.host = CANONICAL_HOST;
@@ -23,5 +28,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next|_vercel|.*\\..*).*)"],
+  matcher: ["/((?!api|_next|_vercel|cdn-cgi|.*\\..*).*)"],
 };
