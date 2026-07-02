@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseFeedXml } from "@/app/lib/rss";
+import { parseFeedXml, sanitizeHtml } from "@/app/lib/rss";
 import { normalizeArticleHtml } from "@/app/lib/articleHtml";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
@@ -9,8 +9,12 @@ import { auth } from "@/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 5 * 1024 * 1024;
+const MAX_BYTES = 3 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
+const MAX_ITEMS = 50;
+const MAX_CONTENT_HTML_CHARS = 120_000;
+const MAX_CONTENT_TEXT_CHARS = 20_000;
+const MAX_OVERSIZED_CONTENT_TEXT_CHARS = 1_200;
 
 function callerIdentity(request: Request, githubId?: string): string {
   if (githubId) return `u:${githubId}`;
@@ -70,15 +74,22 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Feed too large" }, { status: 413 });
     }
     const xml = new TextDecoder("utf-8").decode(buf);
-    const feed = parseFeedXml(xml);
+    const feed = parseFeedXml(xml, {
+      maxItems: MAX_ITEMS,
+      maxContentHtmlChars: MAX_CONTENT_HTML_CHARS,
+      maxContentTextChars: MAX_CONTENT_TEXT_CHARS,
+      maxOversizedContentTextChars: MAX_OVERSIZED_CONTENT_TEXT_CHARS,
+      sanitizeContent: false,
+    });
     for (const item of feed.items) {
       item.link = normalizeHttpUrl(item.link, target.toString()) ?? "";
       if (item.contentHtml) {
         try {
-          item.contentHtml = normalizeArticleHtml(
+          const normalized = normalizeArticleHtml(
             item.contentHtml,
             item.link || target.toString(),
           );
+          item.contentHtml = sanitizeHtml(normalized);
         } catch {}
       }
     }

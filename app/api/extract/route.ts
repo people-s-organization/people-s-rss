@@ -15,7 +15,8 @@ import { auth } from "@/auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_BYTES = 2 * 1024 * 1024;
+const MAX_JINA_BYTES = 1 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 const JINA_TIMEOUT_MS = 20_000;
 const JINA_READER_HOST = "https://r.jina.ai/";
@@ -46,6 +47,11 @@ function callerIdentity(request: Request, githubId?: string): string {
   const fwd = request.headers.get("x-forwarded-for") ?? "";
   const ip = fwd.split(",")[0].trim() || "anon";
   return `ip:${ip}`;
+}
+
+function contentLengthExceeds(res: Response, maxBytes: number): boolean {
+  const len = Number(res.headers.get("content-length"));
+  return Number.isFinite(len) && len > maxBytes;
 }
 
 export async function GET(request: Request) {
@@ -157,6 +163,9 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
   if (contentType && !contentType.includes("html") && !contentType.includes("xml")) {
     return null;
   }
+  if (contentLengthExceeds(res, MAX_BYTES)) {
+    return null;
+  }
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_BYTES) {
     return null;
@@ -191,7 +200,14 @@ async function extractViaJina(target: URL): Promise<Extracted | null> {
     JINA_TIMEOUT_MS,
   );
   if (!res.ok) return null;
-  const text = (await res.text()).trim();
+  if (contentLengthExceeds(res, MAX_JINA_BYTES)) {
+    return null;
+  }
+  const buf = await res.arrayBuffer();
+  if (buf.byteLength > MAX_JINA_BYTES) {
+    return null;
+  }
+  const text = new TextDecoder("utf-8").decode(buf).trim();
   if (!text) return null;
   // If the mirror itself fails, it can return an HTML error page. Do not
   // surface that as article content.

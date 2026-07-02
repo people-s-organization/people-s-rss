@@ -11,6 +11,14 @@ const parser = new XMLParser({
   parseAttributeValue: false,
 });
 
+type ParseFeedOptions = {
+  maxItems?: number;
+  maxContentHtmlChars?: number;
+  maxContentTextChars?: number;
+  maxOversizedContentTextChars?: number;
+  sanitizeContent?: boolean;
+};
+
 // Some feeds (notably xueqiu) double-encode their HTML payload as
 // &lt;![CDATA[...]]&gt; — once the XML parser decodes entities, we end up
 // with literal <![CDATA[...]]> markers in what is supposed to be HTML.
@@ -115,6 +123,48 @@ function parseDate(s: string | undefined): number | undefined {
   return Number.isFinite(t) ? t : undefined;
 }
 
+function truncateText(text: string | undefined, maxChars: number | undefined): string | undefined {
+  if (!text || !maxChars || text.length <= maxChars) return text;
+  return text.slice(0, maxChars).trimEnd();
+}
+
+function parseItemContent(
+  rawHtml: string | undefined,
+  sourceHasFullContent: boolean,
+  opts: ParseFeedOptions,
+): Pick<ParsedItem, "contentHtml" | "contentText" | "hasFullContent"> {
+  const unwrapped = rawHtml ? stripLiteralCdata(rawHtml) : undefined;
+  if (!unwrapped) {
+    return {
+      contentHtml: undefined,
+      contentText: undefined,
+      hasFullContent: sourceHasFullContent,
+    };
+  }
+
+  const maxHtmlChars = opts.maxContentHtmlChars;
+  const oversized =
+    typeof maxHtmlChars === "number" &&
+    maxHtmlChars > 0 &&
+    unwrapped.length > maxHtmlChars;
+
+  if (oversized) {
+    const snippetChars =
+      opts.maxOversizedContentTextChars ?? opts.maxContentTextChars;
+    const snippetSource = snippetChars ? unwrapped.slice(0, snippetChars) : unwrapped;
+    return {
+      contentHtml: undefined,
+      contentText: truncateText(stripHtml(snippetSource), snippetChars),
+      hasFullContent: false,
+    };
+  }
+
+  const contentHtml =
+    opts.sanitizeContent === false ? unwrapped : sanitizeHtml(unwrapped);
+  const contentText = truncateText(stripHtml(unwrapped), opts.maxContentTextChars);
+  return { contentHtml, contentText, hasFullContent: sourceHasFullContent };
+}
+
 function findAtomLink(links: unknown): string | undefined {
   const arr = asArray(links);
   let alt: string | undefined;
@@ -133,39 +183,45 @@ function findAtomLink(links: unknown): string | undefined {
   return alt;
 }
 
-export function parseFeedXml(xml: string): ParsedFeed {
+export function parseFeedXml(xml: string, opts: ParseFeedOptions = {}): ParsedFeed {
   const parsed = parser.parse(xml) as Record<string, unknown>;
 
   const rss = parsed.rss as Record<string, unknown> | undefined;
   if (rss && typeof rss === "object") {
     const channel = rss.channel as Record<string, unknown> | undefined;
-    if (channel) return parseRssChannel(channel);
+    if (channel) return parseRssChannel(channel, opts);
   }
   const rdf = parsed["rdf:RDF"] as Record<string, unknown> | undefined;
   if (rdf) {
     const channel = rdf.channel as Record<string, unknown> | undefined;
-    const items = asArray(rdf.item as unknown);
+    const items = asArray(rdf.item as unknown).slice(0, opts.maxItems);
     const title = pickText(channel?.title) ?? "Untitled";
     return {
       title,
-      items: items.map((it) => parseRssItem(it as Record<string, unknown>)),
+      items: items.map((it) => parseRssItem(it as Record<string, unknown>, opts)),
     };
   }
   const feed = parsed.feed as Record<string, unknown> | undefined;
-  if (feed) return parseAtomFeed(feed);
+  if (feed) return parseAtomFeed(feed, opts);
 
   throw new Error("Unrecognized feed format");
 }
 
-function parseRssChannel(channel: Record<string, unknown>): ParsedFeed {
+function parseRssChannel(
+  channel: Record<string, unknown>,
+  opts: ParseFeedOptions,
+): ParsedFeed {
   const title = pickText(channel.title) ?? "Untitled";
-  const items = asArray(channel.item as unknown).map((it) =>
-    parseRssItem(it as Record<string, unknown>),
+  const items = asArray(channel.item as unknown).slice(0, opts.maxItems).map((it) =>
+    parseRssItem(it as Record<string, unknown>, opts),
   );
   return { title, items };
 }
 
-function parseRssItem(item: Record<string, unknown>): ParsedItem {
+function parseRssItem(
+  item: Record<string, unknown>,
+  opts: ParseFeedOptions,
+): ParsedItem {
   const title = cleanText(pickText(item.title)) ?? "(untitled)";
   const link = pickText(item.link) ?? pickText(item.guid) ?? "";
   const author =
@@ -177,32 +233,33 @@ function parseRssItem(item: Record<string, unknown>): ParsedItem {
     parseDate(pickText(item["dc:date"]));
   const encoded = pickText(item["content:encoded"]);
   const rawHtml = encoded ?? pickText(item.description) ?? undefined;
-  const unwrapped = rawHtml ? stripLiteralCdata(rawHtml) : undefined;
-  const contentHtml = unwrapped ? sanitizeHtml(unwrapped) : undefined;
-  const contentText = unwrapped ? stripHtml(unwrapped) : undefined;
-  const hasFullContent = Boolean(encoded);
+  const content = parseItemContent(rawHtml, Boolean(encoded), opts);
   const guid = pickText(item.guid);
   return {
     title,
     link,
     author,
     publishedAt,
-    contentHtml,
-    contentText,
-    hasFullContent,
+    ...content,
     guid,
   };
 }
 
-function parseAtomFeed(feed: Record<string, unknown>): ParsedFeed {
+function parseAtomFeed(
+  feed: Record<string, unknown>,
+  opts: ParseFeedOptions,
+): ParsedFeed {
   const title = pickText(feed.title) ?? "Untitled";
-  const entries = asArray(feed.entry as unknown).map((e) =>
-    parseAtomEntry(e as Record<string, unknown>),
+  const entries = asArray(feed.entry as unknown).slice(0, opts.maxItems).map((e) =>
+    parseAtomEntry(e as Record<string, unknown>, opts),
   );
   return { title, items: entries };
 }
 
-function parseAtomEntry(entry: Record<string, unknown>): ParsedItem {
+function parseAtomEntry(
+  entry: Record<string, unknown>,
+  opts: ParseFeedOptions,
+): ParsedItem {
   const title = cleanText(pickText(entry.title)) ?? "(untitled)";
   const link = findAtomLink(entry.link) ?? "";
   const authorNode = entry.author as Record<string, unknown> | undefined;
@@ -214,19 +271,14 @@ function parseAtomEntry(entry: Record<string, unknown>): ParsedItem {
     parseDate(pickText(entry.updated));
   const content = pickText(entry.content);
   const rawHtml = content ?? pickText(entry.summary) ?? undefined;
-  const unwrapped = rawHtml ? stripLiteralCdata(rawHtml) : undefined;
-  const contentHtml = unwrapped ? sanitizeHtml(unwrapped) : undefined;
-  const contentText = unwrapped ? stripHtml(unwrapped) : undefined;
-  const hasFullContent = Boolean(content);
+  const parsedContent = parseItemContent(rawHtml, Boolean(content), opts);
   const guid = pickText(entry.id);
   return {
     title,
     link,
     author,
     publishedAt,
-    contentHtml,
-    contentText,
-    hasFullContent,
+    ...parsedContent,
     guid,
   };
 }
