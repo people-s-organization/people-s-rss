@@ -450,11 +450,18 @@ export function Reader() {
   >({});
   useEffect(() => {
     if (!hydrated) return;
-    for (const feed of feeds) {
-      if (autoRefreshedRef.current.has(feed.id)) continue;
-      autoRefreshedRef.current.add(feed.id);
-      void refreshFeed(feed, { silent: true });
-    }
+    let cancelled = false;
+    (async () => {
+      for (const feed of feeds) {
+        if (cancelled) return;
+        if (autoRefreshedRef.current.has(feed.id)) continue;
+        autoRefreshedRef.current.add(feed.id);
+        await refreshFeed(feed, { silent: true });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [feeds, hydrated, refreshFeed]);
 
   const allArticles = useMemo(() => {
@@ -510,7 +517,9 @@ export function Reader() {
   }
 
   async function refreshAllFeeds() {
-    await Promise.all(feeds.map((f) => refreshFeed(f)));
+    for (const feed of feeds) {
+      await refreshFeed(feed);
+    }
   }
 
   function feedsInScope(): Feed[] {

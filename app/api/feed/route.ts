@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const MAX_BYTES = 3 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_ITEMS = 50;
-const MAX_CONTENT_HTML_CHARS = 120_000;
+const MAX_CONTENT_HTML_CHARS = 8_000;
 const MAX_CONTENT_TEXT_CHARS = 20_000;
 const MAX_OVERSIZED_CONTENT_TEXT_CHARS = 1_200;
 
@@ -88,6 +88,7 @@ export async function GET(request: Request) {
           const normalized = normalizeArticleHtml(
             item.contentHtml,
             item.link || target.toString(),
+            { imageSrcset: false },
           );
           item.contentHtml = sanitizeHtml(normalized);
         } catch {}

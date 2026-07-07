@@ -189,18 +189,30 @@ function absolutize(value: string, baseUrl: string | undefined): string | null {
 export function proxyImagesInDoc(
   doc: Document,
   baseUrl: string | undefined,
+  options: { srcset?: boolean } = {},
 ): void {
+  const includeSrcset = options.srcset ?? true;
   doc.querySelectorAll("img").forEach((img) => {
     const rawSrc = img.getAttribute("src");
     const abs = rawSrc ? absolutize(rawSrc, baseUrl) : null;
     if (abs) {
       img.setAttribute("src", proxiedImageUrl(abs, IMAGE_DEFAULT_WIDTH));
-      img.setAttribute("srcset", buildSrcset(abs));
-      if (!img.hasAttribute("sizes")) img.setAttribute("sizes", IMAGE_SIZES);
+      if (includeSrcset) {
+        img.setAttribute("srcset", buildSrcset(abs));
+        if (!img.hasAttribute("sizes")) img.setAttribute("sizes", IMAGE_SIZES);
+      } else {
+        img.removeAttribute("srcset");
+        img.removeAttribute("sizes");
+      }
     }
     img.setAttribute("decoding", "async");
     if (!img.hasAttribute("loading")) img.setAttribute("loading", "lazy");
   });
+
+  if (!includeSrcset) {
+    doc.querySelectorAll("source[srcset]").forEach((src) => src.remove());
+    return;
+  }
 
   doc.querySelectorAll("source[srcset]").forEach((src) => {
     const v = src.getAttribute("srcset");
@@ -238,11 +250,17 @@ function normalizeLinksInDoc(doc: Document, baseUrl: string | undefined): void {
   });
 }
 
-export function normalizeArticleHtml(html: string, baseUrl?: string): string {
+export function normalizeArticleHtml(
+  html: string,
+  baseUrl?: string,
+  options?: { imageSrcset?: boolean },
+): string {
   const doc = parseDocument(html, baseUrl);
   mergeIcons(doc as unknown as Document);
   assignHeadingIds(doc as unknown as Document);
-  proxyImagesInDoc(doc as unknown as Document, baseUrl);
+  proxyImagesInDoc(doc as unknown as Document, baseUrl, {
+    srcset: options?.imageSrcset,
+  });
   normalizeLinksInDoc(doc as unknown as Document, baseUrl);
   return doc.body?.innerHTML ?? "";
 }
