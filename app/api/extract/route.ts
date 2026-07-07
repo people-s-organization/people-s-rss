@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { Readability } from "@mozilla/readability";
-import { sanitizeHtml, stripHtml } from "@/app/lib/rss";
+import { sanitizeDocumentBody } from "@/app/lib/rss";
 import {
   assignHeadingIds,
   mergeIcons,
@@ -129,17 +129,16 @@ export async function GET(request: Request) {
     );
   }
 
-  const cleanHtml = sanitizeHtml(extracted.contentHtml);
-  const text = stripHtml(extracted.contentHtml);
+  const finalized = finalizeArticleHtml(extracted.contentHtml, target.toString());
   return NextResponse.json(
     {
       title: extracted.title,
       byline: extracted.byline,
       siteName: extracted.siteName,
       excerpt: extracted.excerpt,
-      length: extracted.length ?? text.length,
-      contentHtml: cleanHtml,
-      contentText: text,
+      length: extracted.length ?? finalized.text.length,
+      contentHtml: finalized.html,
+      contentText: finalized.text,
     },
     {
       headers: {
@@ -177,14 +176,13 @@ async function parseArticleFromHtml(res: Response, target: URL): Promise<Extract
     return null;
   }
 
-  const absHtml = resolveUrls(article.content, target.toString());
   return {
     title: article.title ?? undefined,
     byline: article.byline ?? undefined,
     siteName: article.siteName ?? undefined,
     excerpt: article.excerpt ?? undefined,
     length: article.length ?? undefined,
-    contentHtml: absHtml,
+    contentHtml: article.content,
   };
 }
 
@@ -276,8 +274,21 @@ function markdownToBasicHtml(source: string): string {
   return chunks.join("");
 }
 
-function resolveUrls(html: string, baseUrl: string): string {
-  const doc = parseDocument(html, baseUrl);
+function stripUnsafeRawHtml(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed[\s\S]*?>/gi, "");
+}
+
+function finalizeArticleHtml(
+  html: string,
+  baseUrl: string,
+): { html: string; text: string } {
+  const doc = parseDocument(stripUnsafeRawHtml(html), baseUrl);
   mergeIcons(doc);
   assignHeadingIds(doc);
   proxyImagesInDoc(doc, baseUrl);
@@ -288,5 +299,9 @@ function resolveUrls(html: string, baseUrl: string): string {
     if (normalized) el.setAttribute("href", normalized);
     else el.removeAttribute("href");
   });
-  return doc.body.innerHTML;
+  sanitizeDocumentBody(doc.body);
+  return {
+    html: doc.body.innerHTML,
+    text: (doc.body.textContent ?? "").replace(/\s+/g, " ").trim(),
+  };
 }

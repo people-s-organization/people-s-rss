@@ -336,6 +336,81 @@ function isSafeUrl(value: string): boolean {
   return true;
 }
 
+function cleanElement(el: Element) {
+  const children = Array.from(el.children);
+  for (const child of children) {
+    cleanElement(child);
+  }
+
+  const tag = el.tagName.toLowerCase();
+  if (!ALLOWED_TAGS.has(tag)) {
+    const parent = el.parentNode;
+    if (parent) {
+      while (el.firstChild) {
+        parent.insertBefore(el.firstChild, el);
+      }
+      parent.removeChild(el);
+    }
+    return;
+  }
+
+  const attrAllow = ALLOWED_ATTRS[tag];
+  const attributes = Array.from(el.attributes);
+  for (const attr of attributes) {
+    const name = attr.name.toLowerCase();
+    if (!attrAllow || !attrAllow.has(name)) {
+      el.removeAttribute(attr.name);
+      continue;
+    }
+    const value = attr.value;
+    if (URL_ATTRS.has(name)) {
+      if (!isSafeUrl(value)) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+    }
+    if (name === "class") {
+      const allowedClasses = CLASS_ALLOWLIST[tag];
+      if (!allowedClasses) {
+        el.removeAttribute(attr.name);
+        continue;
+      }
+      const kept = value
+        .split(/\s+/)
+        .filter((c) => allowedClasses.has(c));
+      if (kept.length === 0) {
+        el.removeAttribute(attr.name);
+      } else {
+        el.setAttribute(attr.name, kept.join(" "));
+      }
+    }
+  }
+
+  if (tag === "a") {
+    if (el.hasAttribute("href")) {
+      el.setAttribute("target", "_blank");
+      el.setAttribute("rel", "noopener noreferrer");
+    }
+  } else if (tag === "img") {
+    el.setAttribute("loading", "lazy");
+    el.setAttribute("decoding", "async");
+    el.setAttribute("referrerpolicy", "no-referrer");
+  }
+}
+
+export function sanitizeDocumentBody(body: Element): void {
+  // Strip any attributes that linkedom may have parsed onto <body> itself
+  // (e.g. from malformed HTML like `<body onload="...">` embedded in input).
+  for (const attr of Array.from(body.attributes)) {
+    body.removeAttribute(attr.name);
+  }
+
+  const bodyChildren = Array.from(body.children);
+  for (const child of bodyChildren) {
+    cleanElement(child);
+  }
+}
+
 export function sanitizeHtml(input: string): string {
   let html = input;
   html = html.replace(/<!--[\s\S]*?-->/g, "");
@@ -353,79 +428,7 @@ export function sanitizeHtml(input: string): string {
   const wrapped = `<!DOCTYPE html><html><body>${html}</body></html>`;
   const { document } = parseHTML(wrapped);
   const body = document.body;
-
-  // Strip any attributes that linkedom may have parsed onto <body> itself
-  // (e.g. from malformed HTML like `<body onload="...">` embedded in input).
-  for (const attr of Array.from(body.attributes)) {
-    body.removeAttribute(attr.name);
-  }
-
-  const cleanElement = (el: Element) => {
-    const children = Array.from(el.children);
-    for (const child of children) {
-      cleanElement(child);
-    }
-
-    const tag = el.tagName.toLowerCase();
-    if (!ALLOWED_TAGS.has(tag)) {
-      const parent = el.parentNode;
-      if (parent) {
-        while (el.firstChild) {
-          parent.insertBefore(el.firstChild, el);
-        }
-        parent.removeChild(el);
-      }
-      return;
-    }
-
-    const attrAllow = ALLOWED_ATTRS[tag];
-    const attributes = Array.from(el.attributes);
-    for (const attr of attributes) {
-      const name = attr.name.toLowerCase();
-      if (!attrAllow || !attrAllow.has(name)) {
-        el.removeAttribute(attr.name);
-        continue;
-      }
-      const value = attr.value;
-      if (URL_ATTRS.has(name)) {
-        if (!isSafeUrl(value)) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-      }
-      if (name === "class") {
-        const allowedClasses = CLASS_ALLOWLIST[tag];
-        if (!allowedClasses) {
-          el.removeAttribute(attr.name);
-          continue;
-        }
-        const kept = value
-          .split(/\s+/)
-          .filter((c) => allowedClasses.has(c));
-        if (kept.length === 0) {
-          el.removeAttribute(attr.name);
-        } else {
-          el.setAttribute(attr.name, kept.join(" "));
-        }
-      }
-    }
-
-    if (tag === "a") {
-      if (el.hasAttribute("href")) {
-        el.setAttribute("target", "_blank");
-        el.setAttribute("rel", "noopener noreferrer");
-      }
-    } else if (tag === "img") {
-      el.setAttribute("loading", "lazy");
-      el.setAttribute("decoding", "async");
-      el.setAttribute("referrerpolicy", "no-referrer");
-    }
-  };
-
-  const bodyChildren = Array.from(body.children);
-  for (const child of bodyChildren) {
-    cleanElement(child);
-  }
+  sanitizeDocumentBody(body);
 
   return body.innerHTML;
 }

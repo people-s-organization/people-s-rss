@@ -40,6 +40,11 @@ import { SettingsDialog } from "./SettingsDialog";
 const FEED_FULL_THRESHOLD = 1500;
 const SYNC_POLL_MS = 12_000;
 
+type ExtractResult = {
+  contentHtml?: string;
+  contentText?: string;
+};
+
 type FeedState =
   | { status: "idle" }
   | { status: "loading" }
@@ -106,6 +111,10 @@ export function Reader() {
   const remoteUpdatedAtRef = useRef<number | null>(null);
   const suppressNextPushRef = useRef(false);
   const pushingRef = useRef(false);
+  const extractQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const extractRequestsRef = useRef<Map<string, Promise<ExtractResult>>>(
+    new Map(),
+  );
 
   useEffect(() => {
     let initialFeeds = loadFeeds();
@@ -663,7 +672,7 @@ export function Reader() {
     if (!selectedArticle) return;
     if (!selectedArticle.link) return;
     if (fullContent[selectedArticle.id]) return;
-    if (extracting === selectedArticle.id) return;
+    if (extracting) return;
     if (selectedArticle.hasFullContent) {
       // Feed item already shipped a content:encoded / atom <content> body.
       return;
@@ -672,7 +681,7 @@ export function Reader() {
       // Fallback: long enough text in description/summary — treat as full.
       return;
     }
-    void handleExtractFull(selectedArticle);
+    void handleExtractFull(selectedArticle, { silent: true });
     // handleExtractFull is stable enough; only react to article change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedArticle?.id]);
@@ -794,21 +803,56 @@ export function Reader() {
     saveRead(next);
   }
 
-  async function handleExtractFull(article: Article) {
-    if (!article.link) return;
+  function fetchExtract(url: string): Promise<ExtractResult> {
+    const existing = extractRequestsRef.current.get(url);
+    if (existing) return existing;
+
+    const request = extractQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const res = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
+        const data = await readApiJson<ExtractResult>(res);
+        if (!res.ok || !data.contentHtml) {
+          throw new Error(data.error ?? `HTTP ${res.status}`);
+        }
+        return data;
+      });
+
+    extractQueueRef.current = request.then(
+      () => undefined,
+      () => undefined,
+    );
+    extractRequestsRef.current.set(url, request);
+    request.then(
+      () => {
+        if (extractRequestsRef.current.get(url) === request) {
+          extractRequestsRef.current.delete(url);
+        }
+      },
+      () => {
+        if (extractRequestsRef.current.get(url) === request) {
+          extractRequestsRef.current.delete(url);
+        }
+      },
+    );
+    return request;
+  }
+
+  async function handleExtractFull(
+    article: Article,
+    options?: { force?: boolean; silent?: boolean },
+  ): Promise<ExtractResult | null> {
+    if (!article.link) return null;
+    if (!options?.force && fullContent[article.id]) {
+      return {
+        contentHtml: fullContent[article.id],
+        contentText: fullContentText[article.id],
+      };
+    }
     setExtracting(article.id);
-    setExtractError(null);
+    if (!options?.silent) setExtractError(null);
     try {
-      const res = await fetch(
-        `/api/extract?url=${encodeURIComponent(article.link)}`,
-      );
-      const data = await readApiJson<{
-        contentHtml?: string;
-        contentText?: string;
-      }>(res);
-      if (!res.ok || !data.contentHtml) {
-        throw new Error(data.error ?? `HTTP ${res.status}`);
-      }
+      const data = await fetchExtract(article.link);
       setFullContent((prev) => ({ ...prev, [article.id]: data.contentHtml! }));
       if (data.contentText) {
         setFullContentText((prev) => ({
@@ -816,10 +860,14 @@ export function Reader() {
           [article.id]: data.contentText!,
         }));
       }
+      return data;
     } catch (err) {
-      setExtractError(err instanceof Error ? err.message : "Extract failed");
+      if (!options?.silent) {
+        setExtractError(err instanceof Error ? err.message : "Extract failed");
+      }
+      return null;
     } finally {
-      setExtracting(null);
+      setExtracting((prev) => (prev === article.id ? null : prev));
     }
   }
 
@@ -838,30 +886,8 @@ export function Reader() {
       // resolve so summarize works on the real article body.
       let body = fullContentText[article.id] ?? "";
       if (!body && !article.hasFullContent && article.link) {
-        try {
-          const res = await fetch(
-            `/api/extract?url=${encodeURIComponent(article.link)}`,
-          );
-          if (res.ok) {
-            const data = await readApiJson<{
-              contentHtml?: string;
-              contentText?: string;
-            }>(res);
-            if (data.contentText) {
-              body = data.contentText;
-              setFullContentText((prev) => ({
-                ...prev,
-                [article.id]: data.contentText!,
-              }));
-              if (data.contentHtml) {
-                setFullContent((prev) => ({
-                  ...prev,
-                  [article.id]: data.contentHtml!,
-                }));
-              }
-            }
-          }
-        } catch {}
+        const data = await handleExtractFull(article, { silent: true });
+        body = data?.contentText ?? "";
       }
       if (!body) body = article.contentText || article.title;
       const MAX_SUMMARY_INPUT = 50_000;
@@ -1288,13 +1314,15 @@ export function Reader() {
                         : t("summarizeAction")}
                   </button>
                   <button
-                    onClick={() => handleExtractFull(selectedArticle)}
+                    onClick={() =>
+                      handleExtractFull(selectedArticle, { force: true })
+                    }
                     disabled={
-                      extracting === selectedArticle.id || !selectedArticleLink
+                      Boolean(extracting) || !selectedArticleLink
                     }
                     className="ml-auto text-xs rounded px-2 py-1 opacity-40 hover:opacity-100 hover:bg-muted disabled:opacity-20"
                     title={
-                      extracting === selectedArticle.id
+                      extracting
                         ? t("loadingFullArticleTitle")
                         : fullContent[selectedArticle.id]
                           ? t("reFetchFullArticle")
@@ -1399,8 +1427,11 @@ export function Reader() {
           onSummarize={() => handleSummarize(selectedArticle)}
           fullHtml={fullContent[selectedArticle.id]}
           extracting={extracting === selectedArticle.id}
+          extractBusy={Boolean(extracting)}
           extractError={extractError}
-          onExtract={() => handleExtractFull(selectedArticle)}
+          onExtract={() =>
+            handleExtractFull(selectedArticle, { force: true })
+          }
         />
       )}
     </div>
@@ -2397,6 +2428,7 @@ function MobileReader({
   onSummarize,
   fullHtml,
   extracting,
+  extractBusy,
   extractError,
   onExtract,
 }: {
@@ -2410,6 +2442,7 @@ function MobileReader({
   onSummarize: () => void;
   fullHtml?: string;
   extracting: boolean;
+  extractBusy: boolean;
   extractError: string | null;
   onExtract: () => void;
 }) {
@@ -2437,9 +2470,15 @@ function MobileReader({
         )}
         <button
           onClick={onExtract}
-          disabled={extracting || !sourceUrl}
+          disabled={extractBusy || !sourceUrl}
           className="text-xs rounded px-2 py-1 opacity-50 hover:opacity-100 disabled:opacity-30"
-          title={fullHtml ? t("reloadFullArticle") : t("loadFullArticle")}
+          title={
+            extractBusy
+              ? t("loadingFullArticleTitle")
+              : fullHtml
+                ? t("reloadFullArticle")
+                : t("loadFullArticle")
+          }
         >
           {extracting ? "…" : "📖"}
         </button>
