@@ -682,9 +682,10 @@ export function Reader() {
       return;
     }
     void handleExtractFull(selectedArticle, { silent: true });
-    // handleExtractFull is stable enough; only react to article change
+    // Also react when an in-flight extract finishes so rapid article switches
+    // still load the article the reader actually landed on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedArticle?.id]);
+  }, [selectedArticle?.id, extracting]);
 
   function selectArticle(id: string) {
     setSelectedArticleId(id);
