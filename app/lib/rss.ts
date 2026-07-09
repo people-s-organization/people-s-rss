@@ -1,5 +1,10 @@
 import { XMLParser } from "fast-xml-parser";
 import { parseHTML } from "linkedom";
+import {
+  looksLikeMarkdown,
+  markdownToBasicHtml,
+  stripJinaMetadata,
+} from "./markdown";
 import type { ParsedFeed, ParsedItem } from "./types";
 
 const parser = new XMLParser({
@@ -159,9 +164,17 @@ function parseItemContent(
     };
   }
 
+  const normalizedContent = looksLikeMarkdown(unwrapped)
+    ? markdownToBasicHtml(stripJinaMetadata(unwrapped))
+    : unwrapped;
   const contentHtml =
-    opts.sanitizeContent === false ? unwrapped : sanitizeHtml(unwrapped);
-  const contentText = truncateText(stripHtml(unwrapped), opts.maxContentTextChars);
+    opts.sanitizeContent === false
+      ? normalizedContent
+      : sanitizeHtml(normalizedContent);
+  const contentText = truncateText(
+    stripHtml(normalizedContent),
+    opts.maxContentTextChars,
+  );
   return { contentHtml, contentText, hasFullContent: sourceHasFullContent };
 }
 

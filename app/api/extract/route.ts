@@ -7,6 +7,7 @@ import {
   proxyImagesInDoc,
 } from "@/app/lib/articleHtml";
 import { parseDocument } from "@/app/lib/dom";
+import { markdownToBasicHtml, stripJinaMetadata } from "@/app/lib/markdown";
 import { assertPublicHttpUrl, safeFetch, SSRFError } from "@/app/lib/ssrfGuard";
 import { rateLimit, rateLimitedResponse } from "@/app/lib/rateLimit";
 import { normalizeHttpUrl, normalizeMaybeEncodedHttpUrl } from "@/app/lib/url";
@@ -211,67 +212,12 @@ async function extractViaJina(target: URL): Promise<Extracted | null> {
   // surface that as article content.
   if (/^<!doctype html/i.test(text) || /^<html[\s>]/i.test(text)) return null;
   if (/^(error|{"error")/i.test(text.slice(0, 64))) return null;
-  const safe = markdownToBasicHtml(text);
+  const markdown = stripJinaMetadata(text);
+  const safe = markdownToBasicHtml(markdown);
   return {
     contentHtml: `<article>${safe}</article>`,
-    length: text.length,
+    length: markdown.length,
   };
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function markdownToBasicHtml(source: string): string {
-  const lines = source.split(/\r?\n/);
-  const chunks: string[] = [];
-  let para: string[] = [];
-  let list: string[] = [];
-
-  const flushPara = () => {
-    if (!para.length) return;
-    chunks.push(`<p>${escapeHtml(para.join(" "))}</p>`);
-    para = [];
-  };
-  const flushList = () => {
-    if (!list.length) return;
-    chunks.push(`<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
-    list = [];
-  };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) {
-      flushPara();
-      flushList();
-      continue;
-    }
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      flushPara();
-      flushList();
-      const level = heading[1].length;
-      chunks.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`);
-      continue;
-    }
-    const bullet = line.match(/^[-*]\s+(.+)$/);
-    if (bullet) {
-      flushPara();
-      list.push(bullet[1]);
-      continue;
-    }
-    flushList();
-    para.push(line);
-  }
-
-  flushPara();
-  flushList();
-  return chunks.join("");
 }
 
 function stripUnsafeRawHtml(html: string): string {
