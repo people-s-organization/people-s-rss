@@ -11,6 +11,7 @@ import type {
   SummaryLanguage,
 } from "@/app/lib/types";
 import { usePullGestures } from "@/app/lib/usePullToRefresh";
+import { markdownToHtmlIfNeeded } from "@/app/lib/markdown";
 import { normalizeHttpUrl, normalizeMaybeEncodedHttpUrl } from "@/app/lib/url";
 import {
   isInitialized,
@@ -1505,7 +1506,7 @@ function ArticleBody({
   const t = useTranslations("Reader");
   const sourceUrl = normalizeHttpUrl(article.link);
   const safeHtml = useMemo(
-    () => (html ? normalizeRenderedHtmlLinks(html, sourceUrl ?? undefined) : html),
+    () => renderArticleHtml(html, sourceUrl ?? undefined),
     [html, sourceUrl],
   );
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1699,6 +1700,15 @@ function normalizeRenderedHtmlLinks(
     a.rel = "noopener noreferrer";
   });
   return template.innerHTML;
+}
+
+function renderArticleHtml(
+  html: string | undefined,
+  baseUrl: string | undefined,
+): string | undefined {
+  if (!html) return html;
+  const converted = markdownToHtmlIfNeeded(html);
+  return normalizeRenderedHtmlLinks(converted ?? html, baseUrl);
 }
 
 function MobileFeedPicker({
@@ -2489,6 +2499,10 @@ function MobileReader({
 }) {
   const t = useTranslations("Reader");
   const sourceUrl = normalizeHttpUrl(article.link);
+  const contentHtml = renderArticleHtml(
+    fullHtml ?? article.contentHtml,
+    sourceUrl ?? undefined,
+  );
   return (
     <div className="md:hidden fixed inset-0 z-40 bg-background flex flex-col">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
@@ -2566,10 +2580,8 @@ function MobileReader({
           </div>
         )}
         <div className="prose-content">
-          {fullHtml ? (
-            <div dangerouslySetInnerHTML={{ __html: fullHtml }} />
-          ) : article.contentHtml ? (
-            <div dangerouslySetInnerHTML={{ __html: article.contentHtml }} />
+          {contentHtml ? (
+            <div dangerouslySetInnerHTML={{ __html: contentHtml }} />
           ) : (
             <p className="opacity-60 text-sm">{t("noContentMobile")}</p>
           )}

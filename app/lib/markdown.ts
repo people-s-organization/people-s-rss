@@ -7,6 +7,55 @@ function escapeHtml(s: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function decodeHtmlEntities(input: string): string {
+  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
+    if (body.startsWith("#")) {
+      const isHex = body[1] === "x" || body[1] === "X";
+      const num = parseInt(isHex ? body.slice(2) : body.slice(1), isHex ? 16 : 10);
+      if (Number.isFinite(num) && num > 0 && num <= 0x10ffff) {
+        try {
+          return String.fromCodePoint(num);
+        } catch {
+          return match;
+        }
+      }
+      return match;
+    }
+    switch (body.toLowerCase()) {
+      case "amp":
+        return "&";
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "quot":
+        return '"';
+      case "apos":
+      case "#39":
+        return "'";
+      case "nbsp":
+        return " ";
+      default:
+        return match;
+    }
+  });
+}
+
+function htmlToMarkdownText(html: string): string {
+  return decodeHtmlEntities(
+    html
+      .replace(/<\s*br\s*\/?>/gi, "\n")
+      .replace(/<\s*h([1-6])\b[^>]*>/gi, (_match, level: string) => {
+        return `\n\n${"#".repeat(Number(level))} `;
+      })
+      .replace(/<\s*li\b[^>]*>/gi, "\n- ")
+      .replace(/<\s*\/(p|div|section|article|h[1-6]|li|blockquote|pre|tr)\s*>/gi, "\n\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  );
+}
+
 export function stripJinaMetadata(source: string): string {
   const lines = source.split(/\r?\n/);
   const markerIndex = lines.findIndex((line) =>
@@ -26,6 +75,16 @@ export function looksLikeMarkdown(source: string): boolean {
   return /(^|\n)\s{0,3}#{1,6}\s+\S|(^|\n)\s*[-*+]\s+\S|(^|\n)\s*\d+[.)]\s+\S|!\[[^\]\n]*\]\([^)]+\)|\[[^\]\n]+\]\([^)]+\)/m.test(
     text,
   );
+}
+
+export function markdownToHtmlIfNeeded(source: string): string | null {
+  const hasHtmlTags = /<\/?[a-z][\s\S]*>/i.test(source);
+  const candidate = hasHtmlTags ? htmlToMarkdownText(source) : source;
+  if (hasHtmlTags && !/^Markdown Content:\s*/im.test(candidate)) {
+    return null;
+  }
+  if (!looksLikeMarkdown(candidate)) return null;
+  return markdownToBasicHtml(stripJinaMetadata(candidate));
 }
 
 function isUnsafeMarkdownUrl(url: string): boolean {
