@@ -69,6 +69,29 @@ type SyncStatus =
   | { state: "syncing" }
   | { state: "error"; error: string };
 
+function mergeRemoteWithLocalAdditions(
+  remote: SyncBlob,
+  localFeeds: Feed[],
+): { blob: SyncBlob; changed: boolean } {
+  const remoteFeeds = remote.feeds ?? [];
+  const remoteIds = new Set(remoteFeeds.map((f) => f.id));
+  const remoteUpdatedAt = remote.updatedAt ?? 0;
+  const localAdditions = localFeeds.filter((feed) => {
+    if (remoteIds.has(feed.id)) return false;
+    return (feed.addedAt ?? 0) > remoteUpdatedAt;
+  });
+  if (localAdditions.length === 0) {
+    return { blob: remote, changed: false };
+  }
+  return {
+    blob: {
+      ...remote,
+      feeds: [...remoteFeeds, ...localAdditions],
+    },
+    changed: true,
+  };
+}
+
 
 export function Reader() {
   const { data: session, status: authStatus } = useSession();
@@ -323,7 +346,12 @@ export function Reader() {
         const localAI = loadAIConfig();
         syncReady.current = true;
         if (remote) {
-          applyRemoteSync(remote);
+          const localFeeds = loadFeeds();
+          const merged = mergeRemoteWithLocalAdditions(remote, localFeeds);
+          applyRemoteSync(merged.blob);
+          if (merged.changed) {
+            void pushSyncPatch({ feeds: merged.blob.feeds ?? [] }).catch(() => {});
+          }
         } else {
           const localFeeds = loadFeeds();
           remoteUpdatedAtRef.current = null;
@@ -757,6 +785,9 @@ export function Reader() {
       ...prev,
       [feed.id]: { status: "ready", articles, fetchedAt: Date.now() },
     }));
+    if (authStatus === "authenticated" && syncReady.current) {
+      await pushSyncPatch({ feeds: next });
+    }
   }
 
   function handleRemoveFeed(id: string) {
